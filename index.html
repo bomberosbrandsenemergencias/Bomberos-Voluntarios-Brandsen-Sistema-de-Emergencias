@@ -1213,6 +1213,7 @@
         '<div class="field" style="flex:2;min-width:150px;"><label>Apellido y nombre</label><input class="mini-input" id="'+idBase+'_nombre" value="'+esc(item.nombre||"")+'"></div>'+
         '<div class="field" style="flex:1;min-width:100px;"><label>DNI</label><input class="mini-input" id="'+idBase+'_dni" value="'+esc(item.dni||"")+'"></div>'+
         (tipo==="mayor"? '<div class="field" style="flex:1;min-width:110px;"><label>Teléfono</label><input class="mini-input" id="'+idBase+'_telefono" value="'+esc(item.telefono||"")+'"></div>' : '')+
+        (tipo==="mayor"? '<div class="field" style="flex:2;min-width:150px;"><label>Dirección</label><input class="mini-input" id="'+idBase+'_direccion" value="'+esc(item.direccion||"")+'"></div>' : '')+
         '<button type="button" class="btn-mini ghost" data-evac-quitar="'+prefix+':'+tipo+':'+i+'">Quitar</button>'+
       '</div>';
     }).join("");
@@ -1248,6 +1249,8 @@
         if(tipo==="mayor"){
           var telEl = document.getElementById(idBase+"_telefono");
           if(telEl) item.telefono = telEl.value;
+          var dirEl2 = document.getElementById(idBase+"_direccion");
+          if(dirEl2) item.direccion = dirEl2.value;
         }
       });
     });
@@ -1288,7 +1291,7 @@
       btn.addEventListener("click", function(){
         var tipo = btn.getAttribute("data-evac-agregar").split(":")[1];
         sincronizarEvacuadosDesdeDOM(prefix);
-        evacArr(prefix, tipo).push(tipo==="mayor" ? {nombre:"",dni:"",telefono:""} : {nombre:"",dni:""});
+        evacArr(prefix, tipo).push(tipo==="mayor" ? {nombre:"",dni:"",telefono:"",direccion:""} : {nombre:"",dni:""});
         refrescarEvacuados(prefix);
       });
     });
@@ -1309,6 +1312,8 @@
         if(tipo==="mayor"){
           var telEl = document.getElementById(idBase+"_telefono");
           item.telefono = telEl ? telEl.value.trim() : "";
+          var dirEl2 = document.getElementById(idBase+"_direccion");
+          item.direccion = dirEl2 ? dirEl2.value.trim() : "";
         }
         return item;
       }).filter(function(x){ return x.nombre || x.dni; });
@@ -2162,7 +2167,7 @@
       function nombreLinea(e, idx, tipo){
         var retirado = !!e.retirado || f.retiradoTodo;
         return '<div style="display:flex;align-items:center;gap:6px;padding:1px 0;'+(retirado?"opacity:.55;text-decoration:line-through;":"")+'">'+
-          '<span>'+esc(e.nombre||"—")+(e.dni?" (DNI "+esc(e.dni)+")":"")+'</span>'+
+          '<span>'+esc(e.nombre||"—")+(e.dni?" (DNI "+esc(e.dni)+")":"")+(tipo==="mayor" && e.direccion?" — "+esc(e.direccion):"")+'</span>'+
           ((f.retiradoTodo || (state.sesion && state.sesion.rol==="centro" && f.origen==="servicio"))? "" :
             '<button type="button" class="btn-mini ghost" data-retirar-evacuado="'+f.origen+':'+esc(f.id)+':'+tipo+':'+idx+'" style="padding:1px 7px;font-size:10.5px;">'+(e.retirado?"Reactivar":"Marcar retirado")+'</button>'
           )+
@@ -2924,7 +2929,7 @@
       if(conNombres){
         var mayDet = s.evacuadosMayoresDetalle||[], menDet = s.evacuadosMenoresDetalle||[];
         mayDet.forEach(function(ev){
-          L.push("     · Mayor: "+(ev.nombre||"—")+(ev.dni?" — DNI "+ev.dni:"")+(ev.telefono?" — Tel. "+ev.telefono:""));
+          L.push("     · Mayor: "+(ev.nombre||"—")+(ev.dni?" — DNI "+ev.dni:"")+(ev.telefono?" — Tel. "+ev.telefono:"")+(ev.direccion?" — Dom. "+ev.direccion:""));
         });
         menDet.forEach(function(ev){
           L.push("     · Menor: "+(ev.nombre||"—")+(ev.dni?" — DNI "+ev.dni:""));
