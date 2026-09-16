@@ -834,6 +834,17 @@
     if(isNaN(d)) return iso;
     return d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
   }
+  // convierte un horaRetorno guardado (puede ser "HH:MM" o, en registros viejos,
+  // una fecha/hora completa) al formato "HH:MM" que necesita un <input type="time">
+  function horaInputValue(v){
+    if(!v) return "";
+    if(v.indexOf("T")===-1) return v;
+    var d = new Date(v);
+    if(isNaN(d)) return "";
+    var hh = String(d.getHours()).padStart(2,"0");
+    var mm = String(d.getMinutes()).padStart(2,"0");
+    return hh+":"+mm;
+  }
 
   // se guarda para no perder el scroll cuando algo (un toggle, o una sincronización en
   // vivo de otro dispositivo) fuerza un re-render mientras seguís en la misma pestaña —
@@ -1456,7 +1467,7 @@
     // (no queda "pendiente de despacho", que es para avisos nuevos sin unidades asignadas todavía)
     if(!nuevasUnidadesOrigen.length){
       patchOrigen.activo = false;
-      patchOrigen.horaRetorno = nowISO();
+      patchOrigen.horaRetorno = new Date().toTimeString().slice(0,5);
       notaCierre = "\nServicio cerrado automáticamente: se quedó sin unidades asignadas.";
     }
     patchOrigen.observaciones = (origen.observaciones ? origen.observaciones+"\n" : "") +
@@ -1690,6 +1701,7 @@
       evacuadosSeccionHTML("es")+
       '<div class="field" style="margin-top:12px;"><label>Centro de evacuación</label><select class="mini-input" id="es_centro">'+opcionesSelect(state.centros.map(function(c){return c.nombre;}), s.centroEvacuacion)+'</select></div>'+
       '<div class="field" style="margin-top:12px;"><label>Observaciones — sumá novedades a medida que avanza</label><textarea class="mini-input" id="es_obs" rows="3">'+esc(s.observaciones||"")+'</textarea></div>'+
+      '<div class="field" style="margin-top:12px;max-width:200px;"><label>Hora de retorno<span style="text-transform:none;letter-spacing:0;font-weight:400;"> — dejala vacía si el servicio sigue activo</span></label><input class="mini-input" type="time" id="es_horaRetorno" value="'+esc(horaInputValue(s.horaRetorno))+'"></div>'+
       '<div class="row-actions" style="margin-top:14px;">'+
         '<button type="button" class="btn primary small" data-guardar-servicio="'+s.id+'">Guardar cambios</button>'+
         '<button type="button" class="btn ghost small" data-cancelar-servicio="1">Cancelar</button>'+
@@ -3014,7 +3026,7 @@
         var id = btn.getAttribute("data-retorno");
         if(!state.db) return;
         btn.setAttribute("disabled","disabled"); btn.textContent = "Marcando…";
-        state.db.collection("servicios").doc(id).update({activo:false, horaRetorno: nowISO()}).then(function(){
+        state.db.collection("servicios").doc(id).update({activo:false, horaRetorno: new Date().toTimeString().slice(0,5)}).then(function(){
           if(state.editingServicioId === id) state.editingServicioId = null;
         }).catch(function(e){
           console.error(e); alert("No se pudo marcar el retorno. Probá de nuevo.");
@@ -3068,11 +3080,16 @@
           evacuadosMayoresDetalle: leerEvacuadosParaGuardar("es").mayores,
           evacuadosMenoresDetalle: leerEvacuadosParaGuardar("es").menores,
           centroEvacuacion: document.getElementById("es_centro").value,
-          observaciones: document.getElementById("es_obs").value
+          observaciones: document.getElementById("es_obs").value,
+          horaRetorno: document.getElementById("es_horaRetorno").value
         };
         // si el aviso estaba pendiente (sin unidades) y ahora se le asignan, queda "despachado": registramos la hora
         if(payload.unidades.length && !original.horaDespacho){
           payload.horaDespacho = new Date().toTimeString().slice(0,5);
+        }
+        // si se cargó (o ya tenía) una hora de retorno y el servicio seguía activo, queda cerrado
+        if(payload.horaRetorno && original.activo){
+          payload.activo = false;
         }
         if(!payload.tipo || !payload.direccion){
           alert("Completá al menos tipo de emergencia y dirección.");
