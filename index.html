@@ -405,12 +405,13 @@ else onAuthStateChanged(auth, user => {
    ===================================================================== */
 const TABS_ADMIN = [['tablero', 'Tablero'], ['servicios', 'Servicios'], ['unidades', 'Unidades'], ['personal', 'Personal'], ['centros', 'Centros'], ['situacion', 'Situación'], ['reportes', 'Reportes'], ['admin', 'Accesos y datos']];
 const TABS_CENTRO = [['micentro', 'Mi centro']];
+const TABS_OPERADOR = [['servicios', 'Servicios']];
 
 function iniciarApp() {
   $('#login').hidden = true; $('#app').hidden = false;
-  const esAdmin = perfil.rol === 'admin';
-  $('#quien').textContent = perfil.nombre || (esAdmin ? 'Administrador' : 'Centro');
-  const tabs = esAdmin ? TABS_ADMIN : TABS_CENTRO;
+  const esAdmin = perfil.rol === 'admin', esOperador = perfil.rol === 'operador';
+  $('#quien').textContent = perfil.nombre || (esAdmin ? 'Administrador' : esOperador ? 'Operador' : 'Centro');
+  const tabs = esAdmin ? TABS_ADMIN : esOperador ? TABS_OPERADOR : TABS_CENTRO;
   $('#nav').innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('');
   $('#nav').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) irA(b.dataset.tab); };
   prepararFormularios();
@@ -429,6 +430,10 @@ function iniciarApp() {
     ['unidades', 'personal', 'centros', 'evacuados', 'eventos', 'helipuertos', 'contactos', 'riesgo', 'rio', 'accesos']
       .forEach(c => escuchar(c, collection(db, c)));
     subs.push(onSnapshot(doc(db, 'config', 'situacion'), s => { situacion = s.data() || {}; programarRender(); }, errLectura));
+  } else if (esOperador) {
+    const desde = new Date(); desde.setMonth(desde.getMonth() - MESES_SERVICIOS);
+    escuchar('servicios', query(collection(db, 'servicios'), where('fecha', '>=', fechaLocal(desde))));
+    ['unidades', 'personal', 'eventos'].forEach(c => escuchar(c, collection(db, c)));
   } else {
     escuchar('centros', collection(db, 'centros'));
     escuchar('eventos', collection(db, 'eventos'));
@@ -614,9 +619,9 @@ const TABLAS = {
       { k: 'activo', l: 'Activo', t: 'check', inline: 1, def: true },
       { k: 'codigo', l: 'Código', req: 1, fijo: 1, def: () => genCodigo() },
       { k: 'nombre', l: 'Nombre (quién lo usa)', req: 1, ph: 'Ej.: Centro Escuela N° 1' },
-      { k: 'rol', l: 'Rol', t: 'select', op: [{ v: 'centro', l: 'Centro de evacuación (solo su centro)' }, { v: 'admin', l: 'Administrador (todo el sistema)' }], def: 'centro' },
+      { k: 'rol', l: 'Rol', t: 'select', op: [{ v: 'centro', l: 'Centro de evacuación (solo su centro)' }, { v: 'operador', l: 'Operador de servicios (solo carga servicios)' }, { v: 'admin', l: 'Administrador (todo el sistema)' }], def: 'centro' },
       { k: 'centro', l: 'Centro (solo rol centro)', t: 'select', op: () => [{ v: '', l: '—' }, ...[...D.centros].sort((a, b) => cmpNat(a.nombre, b.nombre)).map(c => ({ v: c.id, l: c.nombre }))] }],
-    resumen: d => `<b style="font-family:monospace;font-size:15px">${esc(d.codigo)}</b> — ${esc(d.nombre)} <span class="muted">· ${d.rol === 'admin' ? 'Administrador' : 'Centro: ' + esc(nomCentro(d.centro) || '⚠ sin centro')}</span>${d.codigo === perfil?.codigo ? ' <span class="badge">el tuyo</span>' : ''}`,
+    resumen: d => `<b style="font-family:monospace;font-size:15px">${esc(d.codigo)}</b> — ${esc(d.nombre)} <span class="muted">· ${d.rol === 'admin' ? 'Administrador' : d.rol === 'operador' ? 'Operador de servicios' : 'Centro: ' + esc(nomCentro(d.centro) || '⚠ sin centro')}</span>${d.codigo === perfil?.codigo ? ' <span class="badge">el tuyo</span>' : ''}`,
     validar: d => { if (d.rol === 'centro' && !d.centro) return 'Elegí el centro para un código de rol centro.'; if (/[\/\s]/.test(d.codigo)) return 'El código no puede tener espacios ni "/".'; },
     noBorrar: d => d.codigo === perfil?.codigo ? 'No podés borrar tu propio código.' : ''
   }
@@ -769,6 +774,8 @@ function prepararFormularios() {
     prepararSituacion();
     prepararReportes();
     prepararImport();
+  } else if (perfil.rol === 'operador') {
+    prepararServicios();
   }
 }
 
@@ -878,7 +885,7 @@ function servHTML(s, conCheck = true) {
         ${s.estado === 'Pendiente' ? '<button class="btn prim chico" data-sacc="despachar">Despachar</button>' : ''}
         ${s.estado !== 'Cerrado' ? '<button class="btn verde chico" data-sacc="cerrar">Retorno y cerrar</button>' : ''}
         <button class="btn chico" data-sacc="editar">Editar</button>
-        <button class="btn chico" data-sacc="borrar">Borrar</button>
+        ${perfil.rol === 'admin' ? '<button class="btn chico" data-sacc="borrar">Borrar</button>' : ''}
       </div>
     </div></div>`;
 }
