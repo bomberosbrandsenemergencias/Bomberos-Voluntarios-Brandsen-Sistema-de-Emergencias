@@ -176,7 +176,7 @@ table.inf th{background:#f3f4f6}
           <label>Localidad<input name="localidad" list="dlLoc"></label>
           <label>Solicitante<input name="solicitante"></label>
           <label>Teléfono<input name="telefono" type="tel"></label>
-          <label class="ancho">Coordenadas (para el mapa)<span class="hora"><input name="coords" placeholder="-35.1727, -58.2341  ·  o pegá un link de Google Maps"><button type="button" data-gps="coords">📍 GPS</button></span></label>
+          <label class="ancho">Ubicación en el mapa (se busca sola con la dirección; opcional corregir)<span class="hora"><input name="coords" placeholder="Se completa sola · o pegá coordenadas / link de Google Maps"><button type="button" data-geo="coords">🔎 Buscar dirección</button></span><span class="geoRes"></span></label>
           <label class="ancho">Descripción<textarea name="descripcion" rows="2"></textarea></label>
         </div>
         <div class="sub">Unidades</div>
@@ -265,6 +265,7 @@ table.inf th{background:#f3f4f6}
         <label>Versión<select id="rModo"><option value="pub">Pública (sin datos personales)</option><option value="ext">Extendida — uso interno (nombres y DNI)</option></select></label>
         <button class="btn prim" id="btnInforme">Generar</button>
         <button class="btn" id="btnImprimir" disabled>Imprimir / PDF</button>
+        <button class="btn" id="btnUbicar" disabled title="Busca en el mapa la dirección de los servicios del informe que no tienen ubicación">Ubicar servicios sin coordenadas</button>
         <button class="btn" id="btnKmlInf" disabled title="Servicios del informe + centros + helipuertos, para Google Earth o My Maps">Mapa del informe (KML)</button>
       </div>
     </div>
@@ -816,30 +817,70 @@ function prepararFormularios() {
   }
 }
 
-/* coordenadas: GPS del dispositivo, "lat, lng" o link de Google Maps */
+/* ubicación de servicios: se busca la dirección en el mapa (OpenStreetMap / Nominatim) */
 let ultimoInforme = null;
 const tieneCoords = s => s && s.lat !== '' && s.lat != null && s.lng !== '' && s.lng != null;
-const linkMapa = s => `https://www.google.com/maps?q=${s.lat},${s.lng}`;
+const textoDir = s => [s.direccion, s.localidad || 'Brandsen', 'Buenos Aires', 'Argentina'].filter(Boolean).join(', ');
+const linkMapa = s => tieneCoords(s) ? `https://www.google.com/maps?q=${s.lat},${s.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(textoDir(s))}`;
 function leerCoords(txt) {
   txt = String(txt || '').trim();
   if (!txt) return { lat: '', lng: '' };
   const m = txt.replace(/%2C/gi, ',').match(/(-?\d{1,2}(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:[.,]\d+)?)/);
   const lat = m ? Number(m[1].replace(',', '.')) : NaN, lng = m ? Number(m[2].replace(',', '.')) : NaN;
-  if (!m || isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) { toast('No entendí las coordenadas. Usá el botón GPS, o escribí "latitud, longitud" (ej. -35.17, -58.23), o pegá un link de Google Maps.', true); return null; }
+  if (!m || isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) { toast('No entendí la ubicación. Usá "🔎 Buscar dirección", o escribí "latitud, longitud", o pegá un link de Google Maps.', true); return null; }
   return { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 };
 }
-document.addEventListener('click', e => {
-  const b = e.target.closest('[data-gps]'); if (!b) return;
-  const inp = b.closest('form').elements[b.dataset.gps];
-  if (!navigator.geolocation) { toast('Este dispositivo no permite obtener la ubicación.', true); return; }
+// partido de Brandsen y alrededores (para no traer calles homónimas de otras ciudades)
+const VIEWBOX = '-58.75,-34.85,-57.75,-35.55';
+let ultimaConsultaGeo = 0;
+async function geocodificar(direccion, localidad) {
+  const dir = String(direccion || '').trim(); if (!dir || !navigator.onLine) return [];
+  const loc = String(localidad || '').trim() || 'Brandsen';
+  const limpia = dir.replace(/\s+(esq\.?|esquina|e\/|entre|y)\s+.*$/i, '').trim();   // "Alberti esq. Rivadavia" -> "Alberti"
+  const calle = limpia.replace(/\s+(n[°º]?\s*)?\d+\s*$/i, '').trim();                 // "Rivadavia 1200" -> "Rivadavia"
+  // de más precisa a menos: dirección exacta, calle, y si no, el centro de la localidad (nunca otra localidad)
+  const pasos = [[`${dir}, ${loc}`, 'exacta'], [`${limpia}, ${loc}`, 'calle'], [`${calle}, ${loc}`, 'calle'], [loc, 'localidad']];
+  const vistos = new Set();
+  for (const [q, precision] of pasos) {
+    if (vistos.has(q)) continue; vistos.add(q);
+    const espera = 1100 - (Date.now() - ultimaConsultaGeo); if (espera > 0) await new Promise(r => setTimeout(r, espera));   // máx. 1 consulta/seg (política de OSM)
+    ultimaConsultaGeo = Date.now();
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=ar&accept-language=es&bounded=1&viewbox=${VIEWBOX}&q=${encodeURIComponent(q)}`);
+      if (!r.ok) continue;
+      const res = await r.json();
+      if (res.length) return res.map(x => ({ lat: Math.round(Number(x.lat) * 1e6) / 1e6, lng: Math.round(Number(x.lon) * 1e6) / 1e6, nombre: x.display_name, precision: precision === 'exacta' && x.type !== 'house' && x.category !== 'building' ? 'calle' : precision }));
+    } catch { return []; }
+  }
+  return [];
+}
+// en segundo plano: ubica un servicio sin coordenadas y lo guarda como "aproximada"
+async function ubicarServicio(id, direccion, localidad) {
+  const res = await geocodificar(direccion, localidad);
+  if (!res.length) return false;
+  await updateDoc(doc(db, 'servicios', id), { lat: res[0].lat, lng: res[0].lng, geoAprox: true, geoPrecision: res[0].precision, geoTexto: res[0].nombre }).catch(errEsc);
+  return true;
+}
+// botón "🔎 Buscar dirección" en los formularios
+document.addEventListener('click', async e => {
+  const pick = e.target.closest('[data-geopick]');
+  if (pick) {
+    const f = pick.closest('form'); f.elements.coords.value = pick.dataset.geopick; f.elements.coords.dataset.elegida = '1';
+    f.elements.coords.dispatchEvent(new Event('input', { bubbles: true }));
+    pick.closest('.geoRes').innerHTML = '<span class="muted">✔ Ubicación elegida</span>'; return;
+  }
+  const b = e.target.closest('[data-geo]'); if (!b) return;
+  const f = b.closest('form'), out = b.closest('label').querySelector('.geoRes');
+  const dir = f.elements.direccion.value, loc = f.elements.localidad.value;
+  if (!dir.trim()) { toast('Primero escribí la dirección del servicio.', true); return; }
+  if (!navigator.onLine) { toast('Sin conexión: no se puede buscar ahora. Se ubicará después desde Reportes.', true); return; }
   const txt = b.textContent; b.disabled = true; b.textContent = 'Buscando…';
-  navigator.geolocation.getCurrentPosition(p => {
-    inp.value = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`; inp.dispatchEvent(new Event('input', { bubbles: true }));
-    b.disabled = false; b.textContent = txt; toast(`Ubicación tomada (precisión ±${Math.round(p.coords.accuracy)} m)`);
-  }, err => {
-    b.disabled = false; b.textContent = txt;
-    toast(err.code === 1 ? 'Permiso de ubicación denegado. Habilitalo en el navegador para este sitio.' : 'No se pudo obtener la ubicación. Probá de nuevo o escribí las coordenadas.', true);
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+  const res = await geocodificar(dir, loc);
+  b.disabled = false; b.textContent = txt;
+  if (!res.length) { out.innerHTML = `<span class="muted">No la encontré en el mapa. <a href="${linkMapa({ direccion: dir, localidad: loc })}" target="_blank" rel="noopener">Buscala en Google Maps</a>, tocá el punto y pegá acá las coordenadas.</span>`; return; }
+  out.innerHTML = '<div class="muted" style="margin-top:4px">Elegí el resultado correcto:</div>' + res.map(r =>
+    `<div style="display:flex;gap:6px;align-items:center;margin-top:3px"><button type="button" class="btn chico" data-geopick="${r.lat}, ${r.lng}">Usar</button><span style="font-size:13px;color:var(--txt)">${esc(r.nombre.split(',').slice(0, 4).join(','))}</span> <a href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank" rel="noopener" class="muted">ver</a></div>`).join('')
+    + ({ exacta: '', calle: '<div class="muted">⚠ No encontré la altura exacta: el resultado es la calle.</div>', localidad: '<div class="muted">⚠ No encontré la calle en el mapa: el resultado es el centro de la localidad. Si podés, buscala en Google Maps y pegá las coordenadas.</div>' })[res[0].precision];
 });
 
 /* estación meteorológica del cuartel: imágenes en vivo (el servidor no permite leer los números) */
@@ -858,6 +899,7 @@ const selU = new Set(), selP = new Set(), selServ = new Set();
 function limpiarNuevo() {
   const f = $('#fNuevo');
   ['direccion', 'localidad', 'solicitante', 'telefono', 'descripcion', 'coords'].forEach(k => f.elements[k].value = '');
+  const gr = f.querySelector('.geoRes'); if (gr) gr.innerHTML = '';
   f.elements.fecha.value = hoy(); f.elements.horaLlamado.value = ahora();
   f.dataset.limpio = '1';
   selU.clear(); selP.clear(); renderChipsNuevo();
@@ -890,6 +932,8 @@ function prepararServicios() {
     b.set(ref, data);
     if (despachar) data.unidades.forEach(u => b.update(doc(db, 'unidades', u), { estado: 'En servicio', servicioId: ref.id }));
     b.commit().catch(errEsc);           // no se espera: el cambio ya se ve en pantalla y, sin señal, queda en cola
+    if (!tieneCoords(data) && data.direccion) ubicarServicio(ref.id, data.direccion, data.localidad);   // busca la dirección en el mapa
+    else if (tieneCoords(data)) updateDoc(ref, { geoAprox: false }).catch(() => { });
     limpiarNuevo();
     toast(despachar ? 'Aviso registrado y despachado' : 'Aviso registrado');
   });
@@ -953,7 +997,7 @@ function servHTML(s, conCheck = true) {
       <div>${esc(s.direccion)}${s.localidad ? ', ' + esc(s.localidad) : ''}</div>
       <div class="meta">${unis ? '🚒 ' + esc(unis) : 'Sin unidad'} · 👥 ${(s.personal || []).length}
         ${s.horaSalida ? ' · Salida ' + esc(s.horaSalida) : ''}${s.horaRetorno ? ' · Retorno ' + esc(s.horaRetorno) : ''}
-        ${s.eventoId ? ' · 📌 ' + esc(nomEvento(s.eventoId)) : ''}${tieneCoords(s) ? ` · <a href="${linkMapa(s)}" target="_blank" rel="noopener">📍 mapa</a>` : ''}${s.descripcion ? '<br>' + esc(s.descripcion) : ''}</div>
+        ${s.eventoId ? ' · 📌 ' + esc(nomEvento(s.eventoId)) : ''}${s.direccion ? ` · <a href="${linkMapa(s)}" target="_blank" rel="noopener" title="${tieneCoords(s) ? (s.geoAprox ? 'Ubicación aproximada (buscada automáticamente)' : 'Ubicación confirmada') : 'Sin coordenadas: abre la búsqueda de la dirección'}">📍 mapa${tieneCoords(s) ? (s.geoAprox && s.geoPrecision !== 'exacta' ? (s.geoPrecision === 'localidad' ? ' (solo localidad)' : ' (aprox.)') : '') : ' (sin ubicar)'}</a>` : ''}${s.descripcion ? '<br>' + esc(s.descripcion) : ''}</div>
       <div class="btns">
         ${s.estado === 'Pendiente' ? '<button class="btn prim chico" data-sacc="despachar">Despachar</button>' : ''}
         ${s.estado !== 'Cerrado' ? '<button class="btn verde chico" data-sacc="cerrar">Retorno y cerrar</button>' : ''}
@@ -1014,7 +1058,7 @@ function editarServ(s) {
     <label class="ancho">Dirección / lugar<input name="direccion" value="${esc(s.direccion)}" required></label>
     <label>Solicitante<input name="solicitante" value="${esc(s.solicitante)}"></label>
     <label>Teléfono<input name="telefono" value="${esc(s.telefono)}"></label>
-    <label class="ancho">Coordenadas (para el mapa)<span class="hora"><input name="coords" value="${s.lat !== '' && s.lat != null ? s.lat + ', ' + s.lng : ''}" placeholder="-35.1727, -58.2341  ·  o pegá un link de Google Maps"><button type="button" data-gps="coords">📍 GPS</button></span></label>
+    <label class="ancho">Ubicación en el mapa (se busca sola con la dirección; opcional corregir)<span class="hora"><input name="coords" value="${s.lat !== '' && s.lat != null ? s.lat + ', ' + s.lng : ''}" placeholder="Se completa sola · o pegá coordenadas / link de Google Maps"><button type="button" data-geo="coords">🔎 Buscar dirección</button></span><span class="geoRes"></span></label>
     <label class="ancho">Descripción<textarea name="descripcion" rows="2">${esc(s.descripcion)}</textarea></label>
     <label class="ancho">Observaciones / novedades<textarea name="observaciones" rows="2">${esc(s.observaciones)}</textarea></label>
   </div>
@@ -1025,6 +1069,13 @@ function editarServ(s) {
     const cambios = {};
     ['fecha', 'horaLlamado', 'horaSalida', 'horaRetorno', 'tipo', 'estado', 'eventoId', 'localidad', 'direccion', 'solicitante', 'telefono', 'descripcion', 'observaciones'].forEach(k => cambios[k] = g(k));
     const co = leerCoords(g('coords')); if (co === null) return false; Object.assign(cambios, co);
+    const coordsIgual = tieneCoords(s) && co.lat === s.lat && co.lng === s.lng;
+    const dirCambio = cambios.direccion !== s.direccion || cambios.localidad !== s.localidad;
+    if (tieneCoords(co) && !coordsIgual) { cambios.geoAprox = false; cambios.geoPrecision = ''; cambios.geoTexto = ''; }     // corregida a mano
+    let reubicar = false;
+    if (!tieneCoords(co) && cambios.direccion) reubicar = true;                                   // quedó sin ubicación
+    if (dirCambio && coordsIgual && s.geoAprox) { cambios.lat = ''; cambios.lng = ''; reubicar = true; }   // cambió la dirección
+    if (reubicar) setTimeout(() => ubicarServicio(s.id, cambios.direccion, cambios.localidad), 300);
     cambios.unidades = [...eU]; cambios.personal = [...eP];
     updateDoc(doc(db, 'servicios', s.id), cambios).catch(errEsc);
   }, cuerpo => {
@@ -1224,6 +1275,15 @@ function prepararReportes() {
   $('#exportBtns').addEventListener('click', e => { const b = e.target.closest('[data-csv]'); if (b) exportarCSV(b.dataset.csv); });
   $('#btnKml').addEventListener('click', () => exportarKML());
   $('#btnKmlInf').addEventListener('click', () => exportarKML(ultimoInforme));
+  $('#btnUbicar').addEventListener('click', async () => {
+    if (!ultimoInforme) return;
+    if (!navigator.onLine) { toast('Hace falta conexión para buscar direcciones.', true); return; }
+    const b = $('#btnUbicar'), lista = ultimoInforme.servs.filter(x => !tieneCoords(x) && x.direccion);
+    b.disabled = true; let ok = 0, n = 0;
+    for (const s of lista) { n++; b.textContent = `Ubicando ${n} de ${lista.length}…`; if (await ubicarServicio(s.id, s.direccion, s.localidad)) ok++; }
+    toast(`Ubicados ${ok} de ${lista.length}.${ok < lista.length ? ' Los que no se encontraron se pueden ubicar a mano desde Editar.' : ''}`);
+    await generarInforme();
+  });
 }
 
 async function traer(q) {
@@ -1261,7 +1321,7 @@ async function generarInforme() {
     <h4>Servicios</h4>
     ${servs.length ? tabla(['Fecha', 'Llamado', 'Salida', 'Retorno', 'Tipo', 'Lugar', 'Ubicación', 'Unidades', 'Dotación', 'Estado'],
       servs.map(s => [fmtF(s.fecha), esc(s.horaLlamado), esc(s.horaSalida), esc(s.horaRetorno), esc(s.tipo), esc([s.direccion, s.localidad].filter(Boolean).join(', ')),
-        tieneCoords(s) ? `<a href="${linkMapa(s)}" target="_blank" rel="noopener">${Number(s.lat).toFixed(5)}, ${Number(s.lng).toFixed(5)}</a>` : '—',
+        tieneCoords(s) ? `<a href="${linkMapa(s)}" target="_blank" rel="noopener">${Number(s.lat).toFixed(5)}, ${Number(s.lng).toFixed(5)}</a>${s.geoAprox && s.geoPrecision !== 'exacta' ? (s.geoPrecision === 'localidad' ? ' (solo localidad)' : ' (aprox.)') : ''}` : 'sin ubicar',
         esc((s.unidades || []).map(nomUnidad).join(', ')), ext ? esc((s.personal || []).map(nomPersona).join('; ')) : (s.personal || []).length, esc(s.estado)])) : '<div class="muted">Sin servicios.</div>'}
     <h4>Evacuación</h4>
     ${porCentro.length ? tabla(['Centro', 'Ingresos', 'Alojados ahora', 'Mayores', 'Menores'], porCentro.map(([n]) => {
@@ -1275,6 +1335,8 @@ async function generarInforme() {
   $('#btnImprimir').disabled = false;
   ultimoInforme = { servs, titulo: ev ? ev.nombre : `${fmtF(desde)} al ${fmtF(hasta)}` };
   $('#btnKmlInf').disabled = false;
+  const sinUb = servs.filter(x => !tieneCoords(x) && x.direccion).length;
+  $('#btnUbicar').disabled = !sinUb; $('#btnUbicar').textContent = sinUb ? `Ubicar ${sinUb} servicio(s) sin coordenadas` : 'Todos los servicios están ubicados';
 }
 
 function descargar(nombre, contenido, tipo) {
