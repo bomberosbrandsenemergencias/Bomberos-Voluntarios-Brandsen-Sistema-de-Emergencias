@@ -176,6 +176,7 @@ table.inf th{background:#f3f4f6}
           <label>Localidad<input name="localidad" list="dlLoc"></label>
           <label>Solicitante<input name="solicitante"></label>
           <label>Teléfono<input name="telefono" type="tel"></label>
+          <label class="ancho">Coordenadas (para el mapa)<span class="hora"><input name="coords" placeholder="-35.1727, -58.2341  ·  o pegá un link de Google Maps"><button type="button" data-gps="coords">📍 GPS</button></span></label>
           <label class="ancho">Descripción<textarea name="descripcion" rows="2"></textarea></label>
         </div>
         <div class="sub">Unidades</div>
@@ -264,6 +265,7 @@ table.inf th{background:#f3f4f6}
         <label>Versión<select id="rModo"><option value="pub">Pública (sin datos personales)</option><option value="ext">Extendida — uso interno (nombres y DNI)</option></select></label>
         <button class="btn prim" id="btnInforme">Generar</button>
         <button class="btn" id="btnImprimir" disabled>Imprimir / PDF</button>
+        <button class="btn" id="btnKmlInf" disabled title="Servicios del informe + centros + helipuertos, para Google Earth o My Maps">Mapa del informe (KML)</button>
       </div>
     </div>
     <div class="card" id="informe"><div class="muted">Elegí un evento (o un rango de fechas) y tocá Generar.</div></div>
@@ -814,6 +816,32 @@ function prepararFormularios() {
   }
 }
 
+/* coordenadas: GPS del dispositivo, "lat, lng" o link de Google Maps */
+let ultimoInforme = null;
+const tieneCoords = s => s && s.lat !== '' && s.lat != null && s.lng !== '' && s.lng != null;
+const linkMapa = s => `https://www.google.com/maps?q=${s.lat},${s.lng}`;
+function leerCoords(txt) {
+  txt = String(txt || '').trim();
+  if (!txt) return { lat: '', lng: '' };
+  const m = txt.replace(/%2C/gi, ',').match(/(-?\d{1,2}(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:[.,]\d+)?)/);
+  const lat = m ? Number(m[1].replace(',', '.')) : NaN, lng = m ? Number(m[2].replace(',', '.')) : NaN;
+  if (!m || isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) { toast('No entendí las coordenadas. Usá el botón GPS, o escribí "latitud, longitud" (ej. -35.17, -58.23), o pegá un link de Google Maps.', true); return null; }
+  return { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 };
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-gps]'); if (!b) return;
+  const inp = b.closest('form').elements[b.dataset.gps];
+  if (!navigator.geolocation) { toast('Este dispositivo no permite obtener la ubicación.', true); return; }
+  const txt = b.textContent; b.disabled = true; b.textContent = 'Buscando…';
+  navigator.geolocation.getCurrentPosition(p => {
+    inp.value = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`; inp.dispatchEvent(new Event('input', { bubbles: true }));
+    b.disabled = false; b.textContent = txt; toast(`Ubicación tomada (precisión ±${Math.round(p.coords.accuracy)} m)`);
+  }, err => {
+    b.disabled = false; b.textContent = txt;
+    toast(err.code === 1 ? 'Permiso de ubicación denegado. Habilitalo en el navegador para este sitio.' : 'No se pudo obtener la ubicación. Probá de nuevo o escribí las coordenadas.', true);
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+});
+
 /* estación meteorológica del cuartel: imágenes en vivo (el servidor no permite leer los números) */
 const ESTACION = 'https://clima.gestic.com.ar/brandsen/';
 function actualizarMeteo() {
@@ -829,7 +857,7 @@ const selU = new Set(), selP = new Set(), selServ = new Set();
 
 function limpiarNuevo() {
   const f = $('#fNuevo');
-  ['direccion', 'localidad', 'solicitante', 'telefono', 'descripcion'].forEach(k => f.elements[k].value = '');
+  ['direccion', 'localidad', 'solicitante', 'telefono', 'descripcion', 'coords'].forEach(k => f.elements[k].value = '');
   f.elements.fecha.value = hoy(); f.elements.horaLlamado.value = ahora();
   f.dataset.limpio = '1';
   selU.clear(); selP.clear(); renderChipsNuevo();
@@ -846,10 +874,12 @@ function prepararServicios() {
   f.addEventListener('submit', e => {
     e.preventDefault();
     const despachar = e.submitter?.value === 'despachar';
+    const coordsNuevo = leerCoords(f.elements.coords.value); if (coordsNuevo === null) return;
     const g = k => f.elements[k].value.trim();
     const data = {
       fecha: g('fecha'), horaLlamado: g('horaLlamado'), tipo: g('tipo'), eventoId: g('eventoId'),
       direccion: g('direccion'), localidad: g('localidad'), solicitante: g('solicitante'), telefono: g('telefono'), descripcion: g('descripcion'),
+      ...coordsNuevo,
       unidades: [...selU], personal: [...selP],
       estado: despachar ? 'En curso' : 'Pendiente', horaSalida: despachar ? ahora() : '', horaRetorno: '', observaciones: '',
       cargadoPor: perfil.nombre || '', creado: serverTimestamp()
@@ -923,7 +953,7 @@ function servHTML(s, conCheck = true) {
       <div>${esc(s.direccion)}${s.localidad ? ', ' + esc(s.localidad) : ''}</div>
       <div class="meta">${unis ? '🚒 ' + esc(unis) : 'Sin unidad'} · 👥 ${(s.personal || []).length}
         ${s.horaSalida ? ' · Salida ' + esc(s.horaSalida) : ''}${s.horaRetorno ? ' · Retorno ' + esc(s.horaRetorno) : ''}
-        ${s.eventoId ? ' · 📌 ' + esc(nomEvento(s.eventoId)) : ''}${s.descripcion ? '<br>' + esc(s.descripcion) : ''}</div>
+        ${s.eventoId ? ' · 📌 ' + esc(nomEvento(s.eventoId)) : ''}${tieneCoords(s) ? ` · <a href="${linkMapa(s)}" target="_blank" rel="noopener">📍 mapa</a>` : ''}${s.descripcion ? '<br>' + esc(s.descripcion) : ''}</div>
       <div class="btns">
         ${s.estado === 'Pendiente' ? '<button class="btn prim chico" data-sacc="despachar">Despachar</button>' : ''}
         ${s.estado !== 'Cerrado' ? '<button class="btn verde chico" data-sacc="cerrar">Retorno y cerrar</button>' : ''}
@@ -984,6 +1014,7 @@ function editarServ(s) {
     <label class="ancho">Dirección / lugar<input name="direccion" value="${esc(s.direccion)}" required></label>
     <label>Solicitante<input name="solicitante" value="${esc(s.solicitante)}"></label>
     <label>Teléfono<input name="telefono" value="${esc(s.telefono)}"></label>
+    <label class="ancho">Coordenadas (para el mapa)<span class="hora"><input name="coords" value="${s.lat !== '' && s.lat != null ? s.lat + ', ' + s.lng : ''}" placeholder="-35.1727, -58.2341  ·  o pegá un link de Google Maps"><button type="button" data-gps="coords">📍 GPS</button></span></label>
     <label class="ancho">Descripción<textarea name="descripcion" rows="2">${esc(s.descripcion)}</textarea></label>
     <label class="ancho">Observaciones / novedades<textarea name="observaciones" rows="2">${esc(s.observaciones)}</textarea></label>
   </div>
@@ -993,6 +1024,7 @@ function editarServ(s) {
     const g = k => form.elements[k].value.trim();
     const cambios = {};
     ['fecha', 'horaLlamado', 'horaSalida', 'horaRetorno', 'tipo', 'estado', 'eventoId', 'localidad', 'direccion', 'solicitante', 'telefono', 'descripcion', 'observaciones'].forEach(k => cambios[k] = g(k));
+    const co = leerCoords(g('coords')); if (co === null) return false; Object.assign(cambios, co);
     cambios.unidades = [...eU]; cambios.personal = [...eP];
     updateDoc(doc(db, 'servicios', s.id), cambios).catch(errEsc);
   }, cuerpo => {
@@ -1190,7 +1222,8 @@ function prepararReportes() {
   $('#btnInforme').addEventListener('click', generarInforme);
   $('#btnImprimir').addEventListener('click', () => window.print());
   $('#exportBtns').addEventListener('click', e => { const b = e.target.closest('[data-csv]'); if (b) exportarCSV(b.dataset.csv); });
-  $('#btnKml').addEventListener('click', exportarKML);
+  $('#btnKml').addEventListener('click', () => exportarKML());
+  $('#btnKmlInf').addEventListener('click', () => exportarKML(ultimoInforme));
 }
 
 async function traer(q) {
@@ -1226,8 +1259,9 @@ async function generarInforme() {
       [[servs.length, servs.filter(s => s.estado !== 'Cerrado').length, unis.size, pers.size, hhmm(totMin), evs.length, evs.filter(e => e.activo).length]])}
     <div class="dos"><div>${tabla(['Tipo de servicio', 'Cant.'], contar(servs, s => s.tipo))}</div><div>${tabla(['Localidad', 'Cant.'], contar(servs, s => s.localidad))}</div></div>
     <h4>Servicios</h4>
-    ${servs.length ? tabla(['Fecha', 'Llamado', 'Salida', 'Retorno', 'Tipo', 'Lugar', 'Unidades', 'Dotación', 'Estado'],
+    ${servs.length ? tabla(['Fecha', 'Llamado', 'Salida', 'Retorno', 'Tipo', 'Lugar', 'Ubicación', 'Unidades', 'Dotación', 'Estado'],
       servs.map(s => [fmtF(s.fecha), esc(s.horaLlamado), esc(s.horaSalida), esc(s.horaRetorno), esc(s.tipo), esc([s.direccion, s.localidad].filter(Boolean).join(', ')),
+        tieneCoords(s) ? `<a href="${linkMapa(s)}" target="_blank" rel="noopener">${Number(s.lat).toFixed(5)}, ${Number(s.lng).toFixed(5)}</a>` : '—',
         esc((s.unidades || []).map(nomUnidad).join(', ')), ext ? esc((s.personal || []).map(nomPersona).join('; ')) : (s.personal || []).length, esc(s.estado)])) : '<div class="muted">Sin servicios.</div>'}
     <h4>Evacuación</h4>
     ${porCentro.length ? tabla(['Centro', 'Ingresos', 'Alojados ahora', 'Mayores', 'Menores'], porCentro.map(([n]) => {
@@ -1239,6 +1273,8 @@ async function generarInforme() {
       `${fmtF(e.fechaIngreso)} ${esc(e.horaIngreso)}`, e.activo ? '—' : `${fmtF(e.fechaEgreso)} ${esc(e.horaEgreso)}`, esc(e.observaciones)]));
   $('#informe').innerHTML = html;
   $('#btnImprimir').disabled = false;
+  ultimoInforme = { servs, titulo: ev ? ev.nombre : `${fmtF(desde)} al ${fmtF(hasta)}` };
+  $('#btnKmlInf').disabled = false;
 }
 
 function descargar(nombre, contenido, tipo) {
@@ -1251,8 +1287,8 @@ async function exportarCSV(col) {
   let filas, cab;
   if (col === 'servicios') {
     const todos = (await traer(collection(db, 'servicios'))).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => -ordenServ(a, b));
-    cab = ['Fecha', 'Hora llamado', 'Hora salida', 'Hora retorno', 'Tipo', 'Dirección', 'Localidad', 'Solicitante', 'Teléfono', 'Descripción', 'Unidades', 'Dotación', 'Cant. dotación', 'Estado', 'Evento', 'Observaciones'];
-    filas = todos.map(s => [s.fecha, s.horaLlamado, s.horaSalida, s.horaRetorno, s.tipo, s.direccion, s.localidad, s.solicitante, s.telefono, s.descripcion,
+    cab = ['Fecha', 'Hora llamado', 'Hora salida', 'Hora retorno', 'Tipo', 'Dirección', 'Localidad', 'Solicitante', 'Teléfono', 'Descripción', 'Latitud', 'Longitud', 'Unidades', 'Dotación', 'Cant. dotación', 'Estado', 'Evento', 'Observaciones'];
+    filas = todos.map(s => [s.fecha, s.horaLlamado, s.horaSalida, s.horaRetorno, s.tipo, s.direccion, s.localidad, s.solicitante, s.telefono, s.descripcion, s.lat ?? '', s.lng ?? '',
       (s.unidades || []).map(nomUnidad).join(', '), (s.personal || []).map(nomPersona).join('; '), (s.personal || []).length, s.estado, nomEvento(s.eventoId), s.observaciones]);
   } else if (col === 'evacuados') {
     cab = ['Centro', 'Grupo', 'Apellido', 'Nombre', 'DNI', 'Edad', 'Mayor', 'Dirección', 'Teléfono', 'Fecha ingreso', 'Hora ingreso', 'Fecha egreso', 'Hora egreso', 'Alojado', 'Evento', 'Observaciones'];
@@ -1265,15 +1301,17 @@ async function exportarCSV(col) {
   const csv = '﻿' + [cab, ...filas].map(f => f.map(celdaCSV).join(';')).join('\r\n');
   descargar(`${col}_${hoy()}.csv`, csv, 'text/csv;charset=utf-8');
 }
-function exportarKML() {
+function exportarKML(inf = null) {
   const pm = (n, d, lat, lng, est) => `<Placemark><name>${esc(n)}</name><description>${esc(d)}</description><styleUrl>#${est}</styleUrl><Point><coordinates>${lng},${lat},0</coordinates></Point></Placemark>`;
+  const ss = inf ? inf.servs.filter(tieneCoords).map(s => pm(`${s.horaLlamado} ${s.tipo}`, `${fmtF(s.fecha)} — ${s.direccion || ''} ${s.localidad || ''} — Unidades: ${(s.unidades || []).map(nomUnidad).join(', ')} — Dotación: ${(s.personal || []).length} — ${s.estado}${s.descripcion ? ' — ' + s.descripcion : ''}`, s.lat, s.lng, 'serv')) : [];
+  if (inf && inf.servs.length && !ss.length) toast('Ningún servicio del informe tiene coordenadas cargadas; el mapa sale solo con centros y helipuertos.', true);
   const cs = D.centros.filter(c => c.lat && c.lng).map(c => pm(c.nombre, `${c.direccion || ''} — Capacidad ${c.capacidad || '?'} — Evacuados: ${D.evacuados.filter(e => e.centro === c.id && e.activo).length}`, c.lat, c.lng, 'centro'));
   const hs = D.helipuertos.filter(h => h.lat && h.lng).map(h => pm(h.nombre, h.observaciones || '', h.lat, h.lng, 'heli'));
-  if (!cs.length && !hs.length) { toast('No hay centros ni helipuertos con latitud/longitud cargadas.', true); return; }
+  if (!cs.length && !hs.length && !ss.length) { toast('No hay nada con latitud/longitud cargadas para el mapa.', true); return; }
   const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>COE Brandsen</name>
-<Style id="centro"><IconStyle><color>ff0000ff</color></IconStyle></Style><Style id="heli"><IconStyle><color>ffff0000</color></IconStyle></Style>
-<Folder><name>Centros de evacuación</name>${cs.join('')}</Folder><Folder><name>Helipuertos</name>${hs.join('')}</Folder></Document></kml>`;
-  descargar(`coe_brandsen_${hoy()}.kml`, kml, 'application/vnd.google-earth.kml+xml');
+<Style id="centro"><IconStyle><color>ff00aa00</color></IconStyle></Style><Style id="heli"><IconStyle><color>ffff0000</color></IconStyle></Style><Style id="serv"><IconStyle><color>ff0000ff</color></IconStyle></Style>
+${inf ? `<Folder><name>Servicios — ${esc(inf.titulo)}</name>${ss.join('')}</Folder>` : ''}<Folder><name>Centros de evacuación</name>${cs.join('')}</Folder><Folder><name>Helipuertos</name>${hs.join('')}</Folder></Document></kml>`;
+  descargar(`coe_brandsen_${inf ? 'informe_' : ''}${hoy()}.kml`, kml, 'application/vnd.google-earth.kml+xml');
 }
 
 /* =====================================================================
