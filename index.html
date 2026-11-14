@@ -405,7 +405,7 @@ else onAuthStateChanged(auth, user => {
    ===================================================================== */
 const TABS_ADMIN = [['tablero', 'Tablero'], ['servicios', 'Servicios'], ['unidades', 'Unidades'], ['personal', 'Personal'], ['centros', 'Centros'], ['situacion', 'Situación'], ['reportes', 'Reportes'], ['admin', 'Accesos y datos']];
 const TABS_CENTRO = [['micentro', 'Mi centro']];
-const TABS_OPERADOR = [['servicios', 'Servicios']];
+const TABS_OPERADOR = [['servicios', 'Servicios'], ['personal', 'Personal presente']];
 
 function iniciarApp() {
   $('#login').hidden = true; $('#app').hidden = false;
@@ -666,10 +666,10 @@ function montarTabla(col, cont) {
     ${T.cabecera ? `<div class="cabecera" id="cab-${col}"></div>` : ''}
     ${T.buscar ? `<input type="search" class="buscar" placeholder="Buscar…">` : ''}
     <div id="lista-${col}"></div>
-    <details class="alta"><summary>+ Agregar</summary><form autocomplete="off">${camposHTML(camposAlta)}<div class="botones"><button class="btn prim">Agregar</button></div></form></details></div>`;
+    ${perfil.rol === 'admin' ? `<details class="alta"><summary>+ Agregar</summary><form autocomplete="off">${camposHTML(camposAlta)}<div class="botones"><button class="btn prim">Agregar</button></div></form></details>` : ''}</div>`;
   const form = $('form', cont);
   T._form = form;
-  form.addEventListener('submit', e => {
+  if (form) form.addEventListener('submit', e => {
     e.preventDefault();
     const d = leerCampos(form, camposAlta);
     T.campos.forEach(c => { if (!(c.k in d) && c.def !== undefined) d[c.k] = valDef(c); });
@@ -722,7 +722,7 @@ function renderTabla(col) {
         ? `<label class="chk" title="${c.l}"><input type="checkbox" data-inline="${c.k}" ${d[c.k] ? 'checked' : ''}>${c.k === 'presente' ? '' : c.l}</label>`
         : `<select data-inline="${c.k}" class="badge b-${clase(d[c.k])}">${opciones(c).map(o => `<option value="${esc(o.v)}" ${o.v === d[c.k] ? 'selected' : ''}>${esc(o.l)}</option>`).join('')}</select>`).join('')}
       <div class="txt">${T.resumen(d)} ${sinEnviar(d)}</div>
-      <div class="btns">${T.extra ? T.extra(d) : ''}<button class="btn chico" data-acc="edit" title="Editar">✎</button><button class="btn chico" data-acc="del" title="Borrar">🗑</button></div>
+      <div class="btns">${T.extra ? T.extra(d) : ''}${perfil.rol === 'admin' ? '<button class="btn chico" data-acc="edit" title="Editar">✎</button><button class="btn chico" data-acc="del" title="Borrar">🗑</button>' : ''}</div>
     </div>`).join('') + (T.max && total > T.max ? `<div class="muted">Mostrando los últimos ${T.max} de ${total}.</div>` : '')
     : `<div class="vacio">${f ? 'Sin resultados.' : 'Todavía no hay registros. Usá “+ Agregar”.'}</div>`;
 }
@@ -775,6 +775,7 @@ function prepararFormularios() {
     prepararReportes();
     prepararImport();
   } else if (perfil.rol === 'operador') {
+    montarTabla('personal', $('#t-personal'));
     prepararServicios();
   }
 }
