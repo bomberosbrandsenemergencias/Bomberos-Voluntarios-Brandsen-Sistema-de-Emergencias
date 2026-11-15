@@ -106,6 +106,8 @@ table.inf th{background:#f3f4f6}
 .meteo figure{margin:0;text-align:center;font-size:12px;color:var(--gris)}
 .meteo img{display:block;max-width:100%;height:auto;border-radius:6px;background:#fff}
 .meteo.chico img{height:150px;width:auto}
+.grupoTit{font-weight:700;color:var(--rojo);border-bottom:2px solid var(--rojo);padding:10px 4px 3px;margin-top:6px}
+.chips .grupoSep{width:100%;font-size:11.5px;color:var(--gris);font-weight:600;text-transform:uppercase;margin-top:4px}
 .dotU{border:1px solid var(--borde);border-radius:8px;padding:8px 10px;margin-top:8px;background:#fafafa}
 .dotCab{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:end;margin-bottom:6px}
 .dotCab label{min-width:160px}
@@ -315,7 +317,7 @@ table.inf th{background:#f3f4f6}
       <textarea id="impTxt" rows="7" style="width:100%" placeholder="DNI;Apellido;Nombre;Grado;Jerárquico;Chofer;Teléfono&#10;12345678;Pérez;Juan;Bombero;no;sí;2223..."></textarea>
       <div class="botones"><button class="btn" id="btnImpVer">Revisar</button><button class="btn prim" id="btnImpOk" hidden>Confirmar importación</button></div>
       <div id="impPrev"></div>
-      <div class="muted" style="margin-top:8px">Títulos reconocidos — <b>Personal:</b> DNI, Apellido, Nombre (o "Apellido y nombre"), Grado/Jerarquía, Jerárquico, Chofer, Teléfono. <b>Unidades:</b> Unidad/Móvil/Código, Tipo, Estado, Observaciones. <b>Centros:</b> Nombre, Dirección, Localidad, Capacidad, Responsable, Teléfono, Latitud, Longitud. <b>Contactos:</b> Organismo, Nombre, Cargo, Teléfono. <b>Helipuertos:</b> Nombre, Latitud, Longitud, Observaciones.</div>
+      <div class="muted" style="margin-top:8px">Títulos reconocidos — <b>Personal:</b> DNI, Apellido, Nombre (o "Apellido y nombre"), Grado/Jerarquía, Jerárquico, Chofer, Teléfono, Cuerpo (activo Brandsen / destacamento Jeppener / reserva). <b>Unidades:</b> Unidad/Móvil/Código, Tipo, Estado, Observaciones. <b>Centros:</b> Nombre, Dirección, Localidad, Capacidad, Responsable, Teléfono, Latitud, Longitud. <b>Contactos:</b> Organismo, Nombre, Cargo, Teléfono. <b>Helipuertos:</b> Nombre, Latitud, Longitud, Observaciones.</div>
     </div>
   </section>
 
@@ -380,6 +382,9 @@ const TIPOS_SERVICIO = ['Incendio estructural', 'Incendio vehicular', 'Incendio 
 const LOCALIDADES = ['Brandsen', 'Jeppener', 'Altamirano', 'Gómez', 'Oliden', 'Samborombón'];
 const ESTADOS_UNIDAD = ['Disponible', 'En servicio', 'Fuera de servicio'];
 const NIVELES = ['Bajo', 'Medio', 'Alto', 'Crítico'];
+const CUERPOS = ['Cuerpo activo Brandsen', 'Destacamento Jeppener', 'Cuerpo de reserva'];
+const cuerpoDe = p => CUERPOS.includes(p?.cuerpo) ? p.cuerpo : CUERPOS[0];
+const ordenPersonal = (a, b) => (CUERPOS.indexOf(cuerpoDe(a)) - CUERPOS.indexOf(cuerpoDe(b))) || cmpNat(a.apellido, b.apellido) || cmpNat(a.nombre, b.nombre);
 const MESES_SERVICIOS = 4;
 
 /* ---------- Firebase ---------- */
@@ -574,11 +579,13 @@ const TABLAS = {
   },
   personal: {
     titulo: 'Personal', buscar: 1, idDe: d => d.dni,
-    orden: (a, b) => (b.presente - a.presente) || cmpNat(a.apellido, b.apellido),
+    orden: ordenPersonal,
+    grupo: d => cuerpoDe(d),
     campos: [
       { k: 'presente', l: 'Presente', t: 'check', inline: 1, def: false, alta: false },
       { k: 'apellido', l: 'Apellido', req: 1 },
       { k: 'nombre', l: 'Nombre' },
+      { k: 'cuerpo', l: 'Cuerpo / destacamento', t: 'select', op: CUERPOS, def: CUERPOS[0] },
       { k: 'dni', l: 'DNI', req: 1, fijo: 1 },
       { k: 'grado', l: 'Grado / jerarquía' },
       { k: 'telefono', l: 'Teléfono', t: 'tel' },
@@ -774,7 +781,14 @@ function renderTabla(col) {
   const total = items.length;
   if (T.max) items = items.slice(0, T.max);
   const inl = T.campos.filter(c => c.inline);
-  lista.innerHTML = items.length ? items.map(d => `<div class="fila ${d._pend ? 'pend' : ''}" data-id="${esc(d.id)}">
+  let grupoAnt = null;
+  const tituloGrupo = d => {
+    if (!T.grupo) return '';
+    const g = T.grupo(d); if (g === grupoAnt) return ''; grupoAnt = g;
+    const del = items.filter(x => T.grupo(x) === g);
+    return `<div class="grupoTit">${esc(g)} <span class="muted">· ${del.length}${col === 'personal' ? ` · ${del.filter(x => x.presente).length} presentes` : ''}</span></div>`;
+  };
+  lista.innerHTML = items.length ? items.map(d => `${tituloGrupo(d)}<div class="fila ${d._pend ? 'pend' : ''}" data-id="${esc(d.id)}">
       ${inl.map(c => c.t === 'check'
         ? `<label class="chk" title="${c.l}"><input type="checkbox" data-inline="${c.k}" ${d[c.k] ? 'checked' : ''}>${c.k === 'presente' ? '' : c.l}</label>`
         : `<select data-inline="${c.k}" class="badge b-${clase(d[c.k])}">${opciones(c).map(o => `<option value="${esc(o.v)}" ${o.v === d[c.k] ? 'selected' : ''}>${esc(o.l)}</option>`).join('')}</select>`).join('')}
@@ -976,7 +990,7 @@ function htmlDot(st, { todos = false, excepto = '', filtro = '' } = {}) {
   if (!unis.length) h += '<div class="vacio">No hay unidades cargadas (pestaña Unidades).</div>';
   if (!st.unidades.length) return h + '<div class="muted" style="margin-top:6px">Elegí una o más unidades para asignar la dotación.</div>';
   const elegibles = [...D.personal].filter(p => todos || p.presente || asignadoA(st, p.id))
-    .sort((a, b) => (ocu.has(a.id) - ocu.has(b.id)) || (b.jerarquico - a.jerarquico) || cmpNat(a.apellido, b.apellido));
+    .sort(ordenPersonal);
   const fq = norm(filtro);
   h += `<div class="sub">Dotación por unidad ${todos ? '' : '<span style="text-transform:none;font-weight:400">(personal presente · ★ jerárquico · 🚗 chofer)</span>'}</div>`
     + (todos ? `<input type="search" class="dotBus" placeholder="Buscar persona…" value="${esc(filtro)}" style="width:100%;margin-bottom:4px">` : '');
@@ -986,10 +1000,14 @@ function htmlDot(st, { todos = false, excepto = '', filtro = '' } = {}) {
       const p = byId('personal', pid);
       return `<option value="${esc(pid)}" ${pid === sel ? 'selected' : ''}>${esc(p ? nomCorto(p) : pid)}${p?.[marca] ? (marca === 'chofer' ? ' 🚗' : ' ★') : ''}</option>`;
     }).join('');
-    const chips = elegibles.filter(p => { const en = asignadoA(st, p.id); return en === u || (!en && (!fq || norm(p.apellido + ' ' + p.nombre).includes(fq))); })
+    let sepAnt = null;
+    const visibles = elegibles.filter(p => { const en = asignadoA(st, p.id); return en === u || (!en && (!fq || norm(p.apellido + ' ' + p.nombre).includes(fq))); });
+    const variosGrupos = new Set(visibles.map(cuerpoDe)).size > 1;
+    const chips = visibles
       .map(p => {
         const on = a.personal.includes(p.id), o = ocu.get(p.id);
-        return `<button type="button" class="chip ${on ? 'on' : ''} ${o ? 'ocup' : ''}" data-p="${esc(p.id)}" title="${o ? 'En servicio: ' + esc(o.tipo + ' — ' + o.direccion) : esc(p.grado || '')}">${esc(nomCorto(p))}${p.jerarquico ? ' ★' : ''}${p.chofer ? ' 🚗' : ''}${o ? ' (en servicio)' : ''}</button>`;
+        const sep = variosGrupos && cuerpoDe(p) !== sepAnt ? `<span class="grupoSep">${esc(sepAnt = cuerpoDe(p))}</span>` : '';
+        return sep + `<button type="button" class="chip ${on ? 'on' : ''} ${o ? 'ocup' : ''}" data-p="${esc(p.id)}" title="${o ? 'En servicio: ' + esc(o.tipo + ' — ' + o.direccion) : esc(p.grado || '')}">${esc(nomCorto(p))}${p.jerarquico ? ' ★' : ''}${p.chofer ? ' 🚗' : ''}${o ? ' (en servicio)' : ''}</button>`;
       }).join('');
     return `<div class="dotU" data-du="${esc(u)}"><div class="dotCab"><b>🚒 ${esc(nomUnidadD(u))}</b> <span class="muted">${a.personal.length} persona(s)</span>
       <label>Jefe de dotación<select data-rol="jefe">${opts(a.jefe, 'jerarquico')}</select></label>
@@ -1727,7 +1745,8 @@ function parseCSV(txt) {
 const MAPEO = {
   personal: { dni: ['dni', 'documento', 'doc', 'nro documento', 'n documento', 'nro de documento'], apellido: ['apellido', 'apellidos'], nombre: ['nombre', 'nombres'],
     completo: ['apellido y nombre', 'nombre y apellido', 'nombre completo', 'apellido y nombres', 'apellidos y nombres'], grado: ['grado', 'jerarquia', 'rango', 'cargo'],
-    jerarquico: ['jerarquico', 'oficial'], chofer: ['chofer', 'conductor'], telefono: ['telefono', 'celular', 'tel'], presente: ['presente'] },
+    jerarquico: ['jerarquico', 'oficial'], chofer: ['chofer', 'conductor'], telefono: ['telefono', 'celular', 'tel'], presente: ['presente'],
+    cuerpo: ['cuerpo', 'destacamento', 'dependencia', 'cuerpo / destacamento'], reserva: ['reserva'], localidad: ['localidad'] },
   unidades: { codigo: ['unidad', 'movil', 'codigo', 'nombre', 'interno'], tipo: ['tipo'], estado: ['estado'], observaciones: ['observaciones', 'obs'] },
   centros: { nombre: ['nombre', 'centro', 'centro de evacuacion'], direccion: ['direccion', 'domicilio'], localidad: ['localidad'], capacidad: ['capacidad'], responsable: ['responsable', 'referente'],
     telefono: ['telefono', 'celular', 'tel'], lat: ['lat', 'latitud'], lng: ['lng', 'lon', 'long', 'longitud'] },
@@ -1750,7 +1769,8 @@ function mapearImport(col, filas) {
       let ap = v(f, 'apellido'), no = v(f, 'nombre');
       if (!ap && v(f, 'completo')) { const c = v(f, 'completo'); if (c.includes(',')) [ap, no] = c.split(',').map(s => s.trim()); else { const p = c.split(/\s+/); ap = p.shift(); no = p.join(' '); } }
       d = { apellido: ap, nombre: no, dni: v(f, 'dni').replace(/\D/g, ''), grado: v(f, 'grado'), telefono: v(f, 'telefono'),
-        jerarquico: siNo(v(f, 'jerarquico')), chofer: siNo(v(f, 'chofer')), presente: siNo(v(f, 'presente')) };
+        jerarquico: siNo(v(f, 'jerarquico')), chofer: siNo(v(f, 'chofer')), presente: siNo(v(f, 'presente')),
+        cuerpo: CUERPOS.find(c => norm(c) === norm(v(f, 'cuerpo'))) || (/reserva/.test(norm(v(f, 'cuerpo'))) || siNo(v(f, 'reserva')) ? CUERPOS[2] : /jepp/.test(norm(v(f, 'cuerpo') + ' ' + v(f, 'localidad'))) ? CUERPOS[1] : CUERPOS[0]) };
       if (!d.apellido) return;
     } else if (col === 'unidades') {
       const est = ESTADOS_UNIDAD.find(e => norm(e) === norm(v(f, 'estado'))) || 'Disponible';
