@@ -106,6 +106,12 @@ table.inf th{background:#f3f4f6}
 .meteo figure{margin:0;text-align:center;font-size:12px;color:var(--gris)}
 .meteo img{display:block;max-width:100%;height:auto;border-radius:6px;background:#fff}
 .meteo.chico img{height:150px;width:auto}
+.dotU{border:1px solid var(--borde);border-radius:8px;padding:8px 10px;margin-top:8px;background:#fafafa}
+.dotCab{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:end;margin-bottom:6px}
+.dotCab label{min-width:160px}
+.serv.anulado{opacity:.6;border-left-color:#111}
+.b-anul{background:#111;color:#fff}
+.vul{color:#b91c1c;font-weight:600}
 .aviso{background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:14px}
 @media print{
   body *{visibility:hidden}
@@ -145,6 +151,7 @@ table.inf th{background:#f3f4f6}
 
   <!-- TABLERO -->
   <section id="tab-tablero" hidden>
+    <div id="avisoBk"></div>
     <div class="kpis" id="kpis"></div>
     <div class="card"><h3>Clima ahora — Estación Bomberos Brandsen</h3>
       <div class="meteo chico">
@@ -179,10 +186,7 @@ table.inf th{background:#f3f4f6}
           <label class="ancho">Ubicación en el mapa (se busca sola con la dirección; opcional corregir)<span class="hora"><input name="coords" placeholder="Se completa sola · o pegá coordenadas / link de Google Maps"><button type="button" data-geo="coords">🔎 Buscar dirección</button></span><span class="geoRes"></span></label>
           <label class="ancho">Descripción<textarea name="descripcion" rows="2"></textarea></label>
         </div>
-        <div class="sub">Unidades</div>
-        <div class="chips" id="nuUnidades"></div>
-        <div class="sub">Dotación (personal presente)</div>
-        <div class="chips" id="nuPersonal"></div>
+        <div id="nuDot"></div>
         <div class="botones">
           <button class="btn" value="registrar">Registrar aviso</button>
           <button class="btn prim" value="despachar">Registrar y despachar</button>
@@ -197,6 +201,7 @@ table.inf th{background:#f3f4f6}
           <option value="abiertos">Solo abiertos</option>
           <option value="Cerrado">Cerrados</option>
           <option value="todos">Todos (últimos 4 meses)</option>
+          <option value="anulados">Anulados</option>
         </select></label>
         <label>Evento<select id="fsEvento" class="selEvento" data-todos="1"></select></label>
         <label style="flex:1">Buscar<input id="fsBuscar" type="search" placeholder="Dirección, tipo, unidad…"></label>
@@ -216,6 +221,9 @@ table.inf th{background:#f3f4f6}
 
   <!-- CENTROS -->
   <section id="tab-centros" hidden>
+    <div class="card"><h3>🔎 Buscar persona evacuada (todos los centros)</h3>
+      <input type="search" id="busGlobal" placeholder="Apellido, nombre o DNI…" style="width:100%">
+      <div id="busRes" style="margin-top:6px"></div></div>
     <div id="t-centros"></div>
     <div id="centroDetalle"></div>
   </section>
@@ -286,6 +294,16 @@ table.inf th{background:#f3f4f6}
 
   <!-- ADMIN -->
   <section id="tab-admin" hidden>
+    <div class="card">
+      <h3>Copia de seguridad</h3>
+      <div class="muted">Descarga <b>todo</b> el sistema (servicios, personal, unidades, centros, evacuados, códigos de acceso, situación) en un solo archivo. Guardalo en tu Drive o en un pendrive. Recomendado: una vez por semana y siempre al terminar un evento. El archivo tiene datos personales: no lo compartas.</div>
+      <div id="bkEstado" style="margin-top:8px"></div>
+      <div class="botones">
+        <button class="btn prim" id="btnBackup">Descargar copia completa</button>
+        <button class="btn" id="btnRestaurar">Restaurar desde una copia…</button>
+        <input type="file" id="bkArchivo" accept=".json,application/json" hidden>
+      </div>
+    </div>
     <div id="t-accesos"></div>
     <div class="card">
       <h3>Importar datos desde planilla (CSV)</h3>
@@ -506,6 +524,7 @@ function irA(tab) {
 }
 
 function renderTodo() {
+  OCU = ocupados();
   renderPill();
   llenarSelects();
   RENDER[tabActual]?.();
@@ -567,10 +586,11 @@ const TABLAS = {
       { k: 'chofer', l: 'Chofer', t: 'check', def: false }],
     resumen: d => `<b>${esc(d.apellido)}</b>${d.nombre ? ', ' + esc(d.nombre) : ''} <span class="muted">${esc(d.grado || '')}</span>
       ${d.jerarquico ? '<span class="badge" title="Jerárquico">J</span>' : ''} ${d.chofer ? '<span class="badge" title="Chofer">Chofer</span>' : ''}
+      ${OCU.has(d.id) ? `<span class="badge b-En-servicio" title="${esc(OCU.get(d.id).tipo + ' — ' + OCU.get(d.id).direccion)}">🚒 En servicio</span>` : ''}
       ${d.telefono ? `<a class="muted" href="tel:${esc(d.telefono)}">${esc(d.telefono)}</a>` : ''}`,
     cabecera: () => {
-      const pr = D.personal.filter(p => p.presente);
-      return `<b>${pr.length}</b> presentes de ${D.personal.length} · ${pr.filter(p => p.jerarquico).length} jerárquicos · ${pr.filter(p => p.chofer).length} choferes
+      const pr = D.personal.filter(p => p.presente), libres = pr.filter(p => !OCU.has(p.id));
+      return `<b>${pr.length}</b> presentes de ${D.personal.length} · <b>${libres.length}</b> disponibles · ${pr.length - libres.length} en servicio · ${libres.filter(p => p.jerarquico).length} jerárquicos y ${libres.filter(p => p.chofer).length} choferes disponibles
         <button class="btn chico" data-global="todosNo" ${pr.length ? '' : 'disabled'}>Marcar todos no presente</button>`;
     },
     global: {
@@ -594,9 +614,10 @@ const TABLAS = {
       { k: 'lat', l: 'Latitud', t: 'number', step: 'any' },
       { k: 'lng', l: 'Longitud', t: 'number', step: 'any' }],
     resumen: d => {
-      const act = D.evacuados.filter(e => e.centro === d.id && e.activo).length;
+      const ev = evVigentes().filter(e => e.centro === d.id && e.activo), act = ev.length, vul = ev.filter(e => (e.vulnerable || []).length).length, falt = faltantesCentro(d);
       return `<b>${esc(d.nombre)}</b> <span class="muted">${esc([d.direccion, d.localidad].filter(Boolean).join(', '))}</span>
-        <div class="muted">${act} evacuados${d.capacidad ? ' / capacidad ' + d.capacidad : ''}${d.responsable ? ' · Resp.: ' + esc(d.responsable) : ''}${d.telefono ? ' · ' + esc(d.telefono) : ''}</div>`;
+        <div class="muted">${act} evacuados${d.capacidad ? ' / capacidad ' + d.capacidad : ''}${vul ? ` · <span class="vul">⚠ ${vul} atención especial</span>` : ''}${d.responsable ? ' · Resp.: ' + esc(d.responsable) : ''}${d.telefono ? ' · ' + esc(d.telefono) : ''}</div>
+        ${falt.length ? `<div class="vul">Falta: ${esc(falt.join(', '))}</div>` : ''}`;
     },
     extra: d => `<button class="btn azul chico" data-ver="${d.id}">Ver evacuados</button>`,
     onClick: (btn) => { if (btn.dataset.ver) { centroSel = btn.dataset.ver; renderCentroDetalle(true); $('#centroDetalle').scrollIntoView({ behavior: 'smooth' }); } }
@@ -808,8 +829,16 @@ function prepararFormularios() {
     ['unidades', 'personal', 'eventos', 'rio', 'riesgo', 'helipuertos', 'contactos', 'accesos', 'centros'].forEach(c => montarTabla(c, $('#t-' + c)));
     prepararServicios();
     prepararSituacion();
+    $('#busGlobal').addEventListener('input', renderBuscadorEvac);
+    $('#busRes').addEventListener('click', e => {
+      const b = e.target.closest('[data-bus]'); if (!b) return;
+      const ev = byId('evacuados', b.closest('[data-id]').dataset.id); if (!ev) return;
+      if (b.dataset.bus === 'ver') { centroSel = ev.centro; renderCentroDetalle(true); $('#centroDetalle').scrollIntoView({ behavior: 'smooth' }); }
+      else if (b.dataset.bus === 'restaurar' && confirm(`¿Restaurar el registro de ${ev.apellido} ${ev.nombre}?`)) updateDoc(doc(db, 'evacuados', ev.id), { anulado: false }).catch(errEsc);
+    });
     prepararReportes();
     prepararImport();
+    prepararCopia();
     actualizarMeteo(); setInterval(actualizarMeteo, 5 * 60 * 1000);
   } else if (perfil.rol === 'operador') {
     montarTabla('personal', $('#t-personal'));
@@ -894,15 +923,182 @@ function actualizarMeteo() {
 /* =====================================================================
    SERVICIOS
    ===================================================================== */
-const selU = new Set(), selP = new Set(), selServ = new Set();
+const selServ = new Set();
 
+/* ---------- dotación por unidad (jefe, chofer, personal) ---------- */
+const MEDIOS = '_medios';
+const nomUnidadD = id => id === MEDIOS ? 'Por sus medios' : nomUnidad(id);
+const vigentes = () => D.servicios.filter(s => !s.anulado);
+function nuevaDot() { return { unidades: [], asig: {}, aCargo: '' }; }
+function dotDesdeServicio(s) {
+  const st = nuevaDot();
+  st.unidades = [...(s.unidades || [])];
+  if (s.dotacion) {
+    for (const [u, a] of Object.entries(s.dotacion)) {
+      st.asig[u] = { jefe: a.jefe || '', chofer: a.chofer || '', personal: [...(a.personal || [])] };
+      if (!st.unidades.includes(u)) st.unidades.push(u);
+    }
+  } else if ((s.personal || []).length) {            // servicios cargados antes de este cambio
+    const u = st.unidades[0] || MEDIOS; if (!st.unidades.includes(u)) st.unidades.push(u);
+    st.asig[u] = { jefe: '', chofer: '', personal: [...s.personal] };
+  }
+  st.unidades.forEach(u => st.asig[u] ??= { jefe: '', chofer: '', personal: [] });
+  st.aCargo = s.aCargo || '';
+  return st;
+}
+function dotParaGuardar(st) {
+  const dotacion = {}, pers = new Set();
+  st.unidades.forEach(u => {
+    const a = st.asig[u] || { jefe: '', chofer: '', personal: [] };
+    dotacion[u] = { jefe: a.personal.includes(a.jefe) ? a.jefe : '', chofer: a.personal.includes(a.chofer) ? a.chofer : '', personal: [...a.personal] };
+    a.personal.forEach(p => pers.add(p));
+  });
+  return { unidades: st.unidades.filter(u => u !== MEDIOS), dotacion, personal: [...pers], aCargo: pers.has(st.aCargo) ? st.aCargo : '' };
+}
+const asignadoA = (st, pid) => st.unidades.find(u => st.asig[u]?.personal.includes(pid));
+// personas que están en un servicio EN CURSO (salvo el que se está editando)
+function ocupados(excepto = '') {
+  const m = new Map();
+  D.servicios.forEach(s => { if (s.estado !== 'En curso' || s.anulado || s.id === excepto) return; (s.personal || []).forEach(p => m.set(p, s)); });
+  return m;
+}
+let OCU = new Map();   // se recalcula en cada redibujado
+const nomCorto = p => p ? `${p.apellido}${p.nombre ? ' ' + p.nombre.split(' ')[0] : ''}` : '';
+
+function htmlDot(st, { todos = false, excepto = '', filtro = '' } = {}) {
+  const ocu = ocupados(excepto);
+  const unis = [...D.unidades].sort(TABLAS.unidades.orden).filter(u => u.estado !== 'Fuera de servicio' || st.unidades.includes(u.id));
+  const chipU = u => {
+    const ocup = u.estado === 'En servicio' && u.servicioId !== excepto;
+    return `<button type="button" class="chip ${st.unidades.includes(u.id) ? 'on' : ''} ${ocup ? 'ocup' : ''}" data-u="${esc(u.id)}" title="${esc(u.estado)}">${esc(u.codigo)}${ocup ? ' (en servicio)' : ''}</button>`;
+  };
+  let h = `<div class="sub">Unidades</div><div class="chips">${unis.map(chipU).join('')}<button type="button" class="chip ${st.unidades.includes(MEDIOS) ? 'on' : ''}" data-u="${MEDIOS}" title="Personal que va en vehículo particular u otro medio">Por sus medios</button></div>`;
+  if (!unis.length) h += '<div class="vacio">No hay unidades cargadas (pestaña Unidades).</div>';
+  if (!st.unidades.length) return h + '<div class="muted" style="margin-top:6px">Elegí una o más unidades para asignar la dotación.</div>';
+  const elegibles = [...D.personal].filter(p => todos || p.presente || asignadoA(st, p.id))
+    .sort((a, b) => (ocu.has(a.id) - ocu.has(b.id)) || (b.jerarquico - a.jerarquico) || cmpNat(a.apellido, b.apellido));
+  const fq = norm(filtro);
+  h += `<div class="sub">Dotación por unidad ${todos ? '' : '<span style="text-transform:none;font-weight:400">(personal presente · ★ jerárquico · 🚗 chofer)</span>'}</div>`
+    + (todos ? `<input type="search" class="dotBus" placeholder="Buscar persona…" value="${esc(filtro)}" style="width:100%;margin-bottom:4px">` : '');
+  h += st.unidades.map(u => {
+    const a = st.asig[u];
+    const opts = (sel, marca) => '<option value="">—</option>' + a.personal.map(pid => {
+      const p = byId('personal', pid);
+      return `<option value="${esc(pid)}" ${pid === sel ? 'selected' : ''}>${esc(p ? nomCorto(p) : pid)}${p?.[marca] ? (marca === 'chofer' ? ' 🚗' : ' ★') : ''}</option>`;
+    }).join('');
+    const chips = elegibles.filter(p => { const en = asignadoA(st, p.id); return en === u || (!en && (!fq || norm(p.apellido + ' ' + p.nombre).includes(fq))); })
+      .map(p => {
+        const on = a.personal.includes(p.id), o = ocu.get(p.id);
+        return `<button type="button" class="chip ${on ? 'on' : ''} ${o ? 'ocup' : ''}" data-p="${esc(p.id)}" title="${o ? 'En servicio: ' + esc(o.tipo + ' — ' + o.direccion) : esc(p.grado || '')}">${esc(nomCorto(p))}${p.jerarquico ? ' ★' : ''}${p.chofer ? ' 🚗' : ''}${o ? ' (en servicio)' : ''}</button>`;
+      }).join('');
+    return `<div class="dotU" data-du="${esc(u)}"><div class="dotCab"><b>🚒 ${esc(nomUnidadD(u))}</b> <span class="muted">${a.personal.length} persona(s)</span>
+      <label>Jefe de dotación<select data-rol="jefe">${opts(a.jefe, 'jerarquico')}</select></label>
+      ${u === MEDIOS ? '' : `<label>Chofer<select data-rol="chofer">${opts(a.chofer, 'chofer')}</select></label>`}</div>
+      <div class="chips">${chips || `<span class="vacio">${todos ? 'Sin resultados.' : 'No hay personal presente libre (pestaña Personal).'}</span>`}</div></div>`;
+  }).join('');
+  const asignados = st.unidades.flatMap(u => st.asig[u].personal);
+  h += `<label style="max-width:380px;margin-top:8px">A cargo del servicio<select data-acargo><option value="">—</option>${asignados.map(pid => {
+    const p = byId('personal', pid); return `<option value="${esc(pid)}" ${pid === st.aCargo ? 'selected' : ''}>${esc(p ? `${p.apellido} ${p.nombre || ''}${p.grado ? ' (' + p.grado + ')' : ''}` : pid)}</option>`;
+  }).join('')}</select></label>`;
+  return h;
+}
+function montarDot(cont, st, opts = {}) {
+  cont._st = st; cont._opts = opts; cont._filtro = '';
+  const pintar = () => {
+    const h = htmlDot(cont._st, { ...cont._opts, filtro: cont._filtro });
+    if (cont._h === h) return;
+    const foco = document.activeElement?.classList.contains('dotBus') && cont.contains(document.activeElement);
+    cont.innerHTML = cont._h = h;
+    if (foco) { const i = cont.querySelector('.dotBus'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  };
+  cont._pintar = pintar;
+  if (!cont._init) {
+    cont._init = true;
+    const avisar = () => cont.dispatchEvent(new Event('input', { bubbles: true }));
+    cont.addEventListener('click', e => {
+      const st = cont._st;
+      const cu = e.target.closest('[data-u]');
+      if (cu) {
+        const u = cu.dataset.u;
+        if (st.unidades.includes(u)) {
+          if (st.asig[u]?.personal.length && !confirm(`¿Quitar la unidad ${nomUnidadD(u)} y su dotación asignada?`)) return;
+          st.unidades = st.unidades.filter(x => x !== u); delete st.asig[u];
+        } else {
+          st.unidades.push(u); st.asig[u] = { jefe: '', chofer: '', personal: [] };
+          const un = byId('unidades', u);
+          if (un && un.estado === 'En servicio' && un.servicioId !== cont._opts.excepto) toast(`Atención: la unidad ${un.codigo} figura en otro servicio en curso.`, true);
+        }
+        avisar(); pintar(); return;
+      }
+      const cp = e.target.closest('[data-p]');
+      if (cp) {
+        const u = cp.closest('[data-du]').dataset.du, pid = cp.dataset.p, a = st.asig[u];
+        if (a.personal.includes(pid)) {
+          a.personal = a.personal.filter(x => x !== pid);
+          if (a.jefe === pid) a.jefe = ''; if (a.chofer === pid) a.chofer = ''; if (st.aCargo === pid) st.aCargo = '';
+        } else {
+          a.personal.push(pid);
+          const o = ocupados(cont._opts.excepto).get(pid);
+          if (o) toast(`Atención: ${nomPersona(pid)} figura en otro servicio en curso (${o.tipo}).`, true);
+          const p = byId('personal', pid);
+          if (!a.chofer && p?.chofer && u !== MEDIOS) a.chofer = pid;          // sugerencias automáticas
+          else if (!a.jefe && p?.jerarquico) a.jefe = pid;
+        }
+        if (!st.aCargo) st.aCargo = st.unidades.map(x => st.asig[x].jefe).find(Boolean) || '';
+        avisar(); pintar();
+      }
+    });
+    cont.addEventListener('change', e => {
+      const st = cont._st, r = e.target.closest('[data-rol]');
+      if (r) { st.asig[r.closest('[data-du]').dataset.du][r.dataset.rol] = r.value; if (r.dataset.rol === 'jefe' && !st.aCargo) st.aCargo = r.value; pintar(); }
+      if (e.target.matches('[data-acargo]')) st.aCargo = e.target.value;
+    });
+    cont.addEventListener('input', e => { if (e.target.classList?.contains('dotBus')) { cont._filtro = e.target.value; pintar(); } });
+  }
+  pintar();
+}
+function textoDotacion(s, conNombres = true) {
+  const dot = s.dotacion || (s.personal?.length ? { [s.unidades?.[0] || MEDIOS]: { personal: s.personal } } : {});
+  return Object.entries(dot).map(([u, a]) => {
+    const n = (a.personal || []).length;
+    if (!conNombres) return `${nomUnidadD(u)} (${n})`;
+    const extra = [a.jefe ? 'Jefe: ' + nomPersona(a.jefe) : '', a.chofer ? 'Chofer: ' + nomPersona(a.chofer) : ''].filter(Boolean).join(', ');
+    return `${nomUnidadD(u)}: ${(a.personal || []).map(nomPersona).join('; ') || 'sin personal'}${extra ? ' [' + extra + ']' : ''}`;
+  }).join(' | ');
+}
+
+/* ---------- resultado del servicio ---------- */
+const APOYOS = ['Policía', 'SAME / Ambulancia', 'Hospital', 'Defensa Civil', 'Municipio', 'Otro cuartel de bomberos', 'Empresa eléctrica', 'Empresa de gas', 'Vialidad'];
+const RES_CAMPOS = [['asistidos', 'Personas asistidas'], ['lesionados', 'Lesionados'], ['trasladados', 'Trasladados'], ['fallecidos', 'Fallecidos'], ['rescatados', 'Rescatados'], ['evacuadosLugar', 'Evacuados desde el lugar']];
+function resultadoHTML(s = {}) {
+  const r = s.resultado || {};
+  return `<div class="grid">${RES_CAMPOS.map(([k, l]) => `<label>${l}<input type="number" min="0" inputmode="numeric" name="r_${k}" value="${esc(r[k] ?? '')}"></label>`).join('')}
+    <label class="ancho">Trasladados a (hospital / destino)<input name="r_destino" value="${esc(r.destino || '')}"></label></div>
+    <div class="sub">Apoyo de otras instituciones</div>
+    <div class="chips">${APOYOS.map(a => `<label class="chk" style="margin-right:12px"><input type="checkbox" name="r_apoyo" value="${esc(a)}" ${(r.apoyo || []).includes(a) ? 'checked' : ''}> ${esc(a)}</label>`).join('')}</div>
+    <label class="ancho" style="margin-top:6px">Otros apoyos / detalle (ej.: Cuartel Chascomús, 2 dotaciones)<input name="r_apoyoOtro" value="${esc(r.apoyoOtro || '')}"></label>`;
+}
+function leerResultado(form) {
+  const r = {};
+  RES_CAMPOS.forEach(([k]) => { const v = form.elements['r_' + k].value; r[k] = v === '' ? '' : Math.max(0, Math.round(Number(v))); });
+  r.destino = form.elements.r_destino.value.trim();
+  r.apoyo = [...form.querySelectorAll('[name=r_apoyo]:checked')].map(x => x.value);
+  r.apoyoOtro = form.elements.r_apoyoOtro.value.trim();
+  return r;
+}
+const resumenResultado = r => !r ? '' : [
+  ...RES_CAMPOS.filter(([k]) => Number(r[k]) > 0).map(([k, l]) => `${r[k]} ${l.toLowerCase().replace('personas ', '')}`),
+  r.destino ? '→ ' + r.destino : '', ...(r.apoyo || []).map(a => 'Apoyo: ' + a), r.apoyoOtro].filter(Boolean).join(' · ');
+
+/* ---------- formulario "Nuevo aviso" ---------- */
+let dotNuevo = nuevaDot();
 function limpiarNuevo() {
   const f = $('#fNuevo');
   ['direccion', 'localidad', 'solicitante', 'telefono', 'descripcion', 'coords'].forEach(k => f.elements[k].value = '');
   const gr = f.querySelector('.geoRes'); if (gr) gr.innerHTML = '';
   f.elements.fecha.value = hoy(); f.elements.horaLlamado.value = ahora();
   f.dataset.limpio = '1';
-  selU.clear(); selP.clear(); renderChipsNuevo();
+  dotNuevo = nuevaDot(); montarDot($('#nuDot'), dotNuevo);
 }
 
 function prepararServicios() {
@@ -918,15 +1114,17 @@ function prepararServicios() {
     const despachar = e.submitter?.value === 'despachar';
     const coordsNuevo = leerCoords(f.elements.coords.value); if (coordsNuevo === null) return;
     const g = k => f.elements[k].value.trim();
+    const dg = dotParaGuardar(dotNuevo);
     const data = {
       fecha: g('fecha'), horaLlamado: g('horaLlamado'), tipo: g('tipo'), eventoId: g('eventoId'),
       direccion: g('direccion'), localidad: g('localidad'), solicitante: g('solicitante'), telefono: g('telefono'), descripcion: g('descripcion'),
-      ...coordsNuevo,
-      unidades: [...selU], personal: [...selP],
+      ...coordsNuevo, ...dg,
       estado: despachar ? 'En curso' : 'Pendiente', horaSalida: despachar ? ahora() : '', horaRetorno: '', observaciones: '',
-      cargadoPor: perfil.nombre || '', creado: serverTimestamp()
+      anulado: false, cargadoPor: perfil.nombre || '', creado: serverTimestamp()
     };
-    if (despachar && !data.unidades.length && !confirm('No marcaste ninguna unidad. ¿Despachar igual?')) return;
+    if (despachar && !Object.keys(dg.dotacion).length && !confirm('No marcaste ninguna unidad. ¿Despachar igual?')) return;
+    const sinChofer = dg.unidades.filter(u => !dg.dotacion[u].chofer);
+    if (despachar && sinChofer.length && !confirm(`La unidad ${sinChofer.map(nomUnidad).join(', ')} no tiene chofer asignado. ¿Despachar igual?`)) return;
     const ref = doc(collection(db, 'servicios'));
     const b = writeBatch(db);
     b.set(ref, data);
@@ -938,14 +1136,6 @@ function prepararServicios() {
     toast(despachar ? 'Aviso registrado y despachado' : 'Aviso registrado');
   });
 
-  const chipToggle = (set) => e => {
-    const c = e.target.closest('.chip'); if (!c) return;
-    set.has(c.dataset.id) ? set.delete(c.dataset.id) : set.add(c.dataset.id);
-    c.classList.toggle('on'); $('#fNuevo').dataset.limpio = '0';
-  };
-  $('#nuUnidades').addEventListener('click', chipToggle(selU));
-  $('#nuPersonal').addEventListener('click', chipToggle(selP));
-
   ['fsEstado', 'fsEvento'].forEach(id => $('#' + id).addEventListener('change', renderListaServ));
   $('#fsBuscar').addEventListener('input', renderListaServ);
 
@@ -954,11 +1144,7 @@ function prepararServicios() {
     e.target.checked ? selServ.add(e.target.dataset.id) : selServ.delete(e.target.dataset.id);
     renderLote();
   });
-  $('#listaServ').addEventListener('click', e => {
-    const b = e.target.closest('button[data-sacc]'); if (!b) return;
-    const s = byId('servicios', b.closest('[data-id]').dataset.id); if (!s) return;
-    ({ despachar: despacharServ, cerrar: cerrarServ, editar: editarServ, borrar: borrarServ })[b.dataset.sacc](s);
-  });
+  $('#listaServ').addEventListener('click', accionServ);
   $('#btnLote').addEventListener('click', () => {
     const ev = $('#loteEvento').value;
     enLotes([...selServ].map(id => b => b.update(doc(db, 'servicios', id), { eventoId: ev })));
@@ -966,22 +1152,13 @@ function prepararServicios() {
   });
   $('#btnLoteNo').addEventListener('click', () => { selServ.clear(); renderListaServ(); });
 }
+function accionServ(e) {
+  const b = e.target.closest('button[data-sacc]'); if (!b) return;
+  const s = byId('servicios', b.closest('[data-id]').dataset.id); if (!s) return;
+  ({ despachar: despacharServ, cerrar: cerrarServ, editar: editarServ, anular: anularServ, restaurar: restaurarServ })[b.dataset.sacc](s);
+}
 
-function chipsUnidades(sel) {
-  const us = [...D.unidades].sort(TABLAS.unidades.orden).filter(u => u.estado !== 'Fuera de servicio' || sel.has(u.id));
-  return us.length ? us.map(u => `<button type="button" class="chip ${sel.has(u.id) ? 'on' : ''} ${u.estado === 'En servicio' ? 'ocup' : ''}" data-id="${esc(u.id)}" title="${esc(u.estado)}">${esc(u.codigo)}${u.estado === 'En servicio' ? ' (en servicio)' : ''}</button>`).join('')
-    : '<div class="vacio">No hay unidades cargadas (pestaña Unidades).</div>';
-}
-function chipsPersonal(sel, todos = false) {
-  const ps = [...D.personal].filter(p => todos || p.presente || sel.has(p.id)).sort((a, b) => cmpNat(a.apellido, b.apellido));
-  return ps.length ? ps.map(p => `<button type="button" class="chip ${sel.has(p.id) ? 'on' : ''}" data-id="${esc(p.id)}">${esc(p.apellido)}${p.nombre ? ' ' + esc(p.nombre.split(' ')[0]) : ''}${p.jerarquico ? ' ★' : ''}${p.chofer ? ' 🚗' : ''}</button>`).join('')
-    : '<div class="vacio">No hay nadie marcado como presente (pestaña Personal).</div>';
-}
-function renderChipsNuevo() {
-  const u = chipsUnidades(selU), p = chipsPersonal(selP);
-  if ($('#nuUnidades')._h !== u) $('#nuUnidades').innerHTML = $('#nuUnidades')._h = u;
-  if ($('#nuPersonal')._h !== p) $('#nuPersonal').innerHTML = $('#nuPersonal')._h = p;
-}
+function renderChipsNuevo() { $('#nuDot')?._pintar?.(); }
 
 function renderLote() {
   $('#loteServ').hidden = !selServ.size;
@@ -989,20 +1166,26 @@ function renderLote() {
 }
 
 function servHTML(s, conCheck = true) {
-  const unis = (s.unidades || []).map(nomUnidad).join(', ');
-  return `<div class="serv e-${clase(s.estado)} ${s._pend ? 'pend' : ''}" data-id="${esc(s.id)}">
-    ${conCheck ? `<input type="checkbox" class="selServ" data-id="${esc(s.id)}" ${selServ.has(s.id) ? 'checked' : ''}>` : ''}
+  const dotTxt = textoDotacion(s, false);
+  const aCargo = s.aCargo ? nomPersona(s.aCargo) : '';
+  const res = resumenResultado(s.resultado);
+  const admin = perfil.rol === 'admin';
+  return `<div class="serv e-${clase(s.estado)} ${s._pend ? 'pend' : ''} ${s.anulado ? 'anulado' : ''}" data-id="${esc(s.id)}">
+    ${conCheck && !s.anulado ? `<input type="checkbox" class="selServ" data-id="${esc(s.id)}" ${selServ.has(s.id) ? 'checked' : ''}>` : ''}
     <div class="cuerpo">
-      <div class="cab"><b>${esc(s.horaLlamado)}</b> ${s.fecha !== hoy() ? `<span class="muted">${fmtF(s.fecha)}</span>` : ''} · ${esc(s.tipo)} <span class="badge b-${clase(s.estado)}">${esc(s.estado)}</span> ${sinEnviar(s)}</div>
+      <div class="cab"><b>${esc(s.horaLlamado)}</b> ${s.fecha !== hoy() ? `<span class="muted">${fmtF(s.fecha)}</span>` : ''} · ${esc(s.tipo)} <span class="badge b-${clase(s.estado)}">${esc(s.estado)}</span>${s.anulado ? ' <span class="badge b-anul">ANULADO</span>' : ''} ${sinEnviar(s)}</div>
       <div>${esc(s.direccion)}${s.localidad ? ', ' + esc(s.localidad) : ''}</div>
-      <div class="meta">${unis ? '🚒 ' + esc(unis) : 'Sin unidad'} · 👥 ${(s.personal || []).length}
+      <div class="meta">${dotTxt ? '🚒 ' + esc(dotTxt) : 'Sin unidad'} · 👥 ${(s.personal || []).length}${aCargo ? ' · A cargo: ' + esc(aCargo) : ''}
         ${s.horaSalida ? ' · Salida ' + esc(s.horaSalida) : ''}${s.horaRetorno ? ' · Retorno ' + esc(s.horaRetorno) : ''}
-        ${s.eventoId ? ' · 📌 ' + esc(nomEvento(s.eventoId)) : ''}${s.direccion ? ` · <a href="${linkMapa(s)}" target="_blank" rel="noopener" title="${tieneCoords(s) ? (s.geoAprox ? 'Ubicación aproximada (buscada automáticamente)' : 'Ubicación confirmada') : 'Sin coordenadas: abre la búsqueda de la dirección'}">📍 mapa${tieneCoords(s) ? (s.geoAprox && s.geoPrecision !== 'exacta' ? (s.geoPrecision === 'localidad' ? ' (solo localidad)' : ' (aprox.)') : '') : ' (sin ubicar)'}</a>` : ''}${s.descripcion ? '<br>' + esc(s.descripcion) : ''}</div>
+        ${s.eventoId ? ' · 📌 ' + esc(nomEvento(s.eventoId)) : ''}${s.direccion ? ` · <a href="${linkMapa(s)}" target="_blank" rel="noopener" title="${tieneCoords(s) ? (s.geoAprox ? 'Ubicación aproximada (buscada automáticamente)' : 'Ubicación confirmada') : 'Sin coordenadas: abre la búsqueda de la dirección'}">📍 mapa${tieneCoords(s) ? (s.geoAprox && s.geoPrecision !== 'exacta' ? (s.geoPrecision === 'localidad' ? ' (solo localidad)' : ' (aprox.)') : '') : ' (sin ubicar)'}</a>` : ''}${s.descripcion ? '<br>' + esc(s.descripcion) : ''}
+        ${res ? `<br><b>Resultado:</b> ${esc(res)}` : ''}
+        ${s.anulado ? `<br><b>Anulado</b> el ${esc(s.anuladoFecha || '')} por ${esc(s.anuladoPor || '')}: ${esc(s.anuladoMotivo || '')}` : ''}</div>
       <div class="btns">
+        ${s.anulado ? (admin ? '<button class="btn chico" data-sacc="restaurar">Restaurar</button>' : '') : `
         ${s.estado === 'Pendiente' ? '<button class="btn prim chico" data-sacc="despachar">Despachar</button>' : ''}
-        ${s.estado !== 'Cerrado' ? '<button class="btn verde chico" data-sacc="cerrar">Retorno y cerrar</button>' : ''}
+        ${s.estado !== 'Cerrado' ? '<button class="btn verde chico" data-sacc="cerrar">Retorno y cierre</button>' : ''}
         <button class="btn chico" data-sacc="editar">Editar</button>
-        ${perfil.rol === 'admin' ? '<button class="btn chico" data-sacc="borrar">Borrar</button>' : ''}
+        ${admin ? '<button class="btn chico" data-sacc="anular">Anular</button>' : ''}`}
       </div>
     </div></div>`;
 }
@@ -1011,11 +1194,13 @@ const ordenServ = (a, b) => cmpNat(b.fecha + b.horaLlamado, a.fecha + a.horaLlam
 function renderListaServ() {
   const modo = $('#fsEstado').value, ev = $('#fsEvento').value, q = norm($('#fsBuscar').value);
   let l = D.servicios.filter(s => {
+    if (modo === 'anulados') { if (!s.anulado) return false; }
+    else if (s.anulado) return false;
     if (modo === 'hoy' && !(s.estado !== 'Cerrado' || s.fecha === hoy())) return false;
     if (modo === 'abiertos' && s.estado === 'Cerrado') return false;
     if (modo === 'Cerrado' && s.estado !== 'Cerrado') return false;
     if (ev && s.eventoId !== ev) return false;
-    if (q && !norm([s.tipo, s.direccion, s.localidad, s.descripcion, s.solicitante, ...(s.unidades || []).map(nomUnidad)].join(' ')).includes(q)) return false;
+    if (q && !norm([s.tipo, s.direccion, s.localidad, s.descripcion, s.solicitante, textoDotacion(s)].join(' ')).includes(q)) return false;
     return true;
   }).sort(ordenServ);
   const tot = l.length; l = l.slice(0, 200);
@@ -1030,22 +1215,38 @@ function despacharServ(s) {
   (s.unidades || []).forEach(u => byId('unidades', u) && b.update(doc(db, 'unidades', u), { estado: 'En servicio', servicioId: s.id }));
   b.commit().catch(errEsc); toast('Despachado');
 }
-function cerrarServ(s) {
-  const b = writeBatch(db);
-  b.update(doc(db, 'servicios', s.id), { estado: 'Cerrado', horaRetorno: s.horaRetorno || ahora() });
-  D.unidades.filter(u => u.servicioId === s.id || ((s.unidades || []).includes(u.id) && u.estado === 'En servicio' && !u.servicioId))
+function liberarUnidades(b, s, soloEstas = null) {
+  D.unidades.filter(u => (soloEstas ? soloEstas.includes(u.id) : true) && (u.servicioId === s.id || ((s.unidades || []).includes(u.id) && u.estado === 'En servicio' && !u.servicioId)))
     .forEach(u => b.update(doc(db, 'unidades', u.id), { estado: 'Disponible', servicioId: '' }));
-  b.commit().catch(errEsc); toast('Servicio cerrado — unidades disponibles');
 }
-function borrarServ(s) {
-  if (!confirm(`¿Borrar el servicio de las ${s.horaLlamado} (${s.tipo}, ${s.direccion})? No se puede deshacer.`)) return;
+function cerrarServ(s) {
+  const html = `<div class="grid">
+      <label>Hora de retorno<span class="hora"><input type="time" name="horaRetorno" value="${esc(s.horaRetorno || ahora())}" required><button type="button" data-ahora="horaRetorno">Ahora</button></span></label>
+    </div>
+    <div class="sub">Resultado del servicio</div>${resultadoHTML(s)}
+    <label class="ancho" style="margin-top:6px">Novedades / observaciones<textarea name="observaciones" rows="2">${esc(s.observaciones || '')}</textarea></label>`;
+  abrirDialogo(`Retorno y cierre — ${s.tipo}, ${s.direccion}`, html, form => {
+    const b = writeBatch(db);
+    b.update(doc(db, 'servicios', s.id), { estado: 'Cerrado', horaRetorno: form.elements.horaRetorno.value || ahora(), resultado: leerResultado(form), observaciones: form.elements.observaciones.value.trim() });
+    liberarUnidades(b, s);
+    b.commit().catch(errEsc); toast('Servicio cerrado — unidades disponibles');
+  });
+}
+function anularServ(s) {
+  const motivo = prompt(`Anular el servicio de las ${s.horaLlamado} (${s.tipo}, ${s.direccion}).\n\nNo se borra: queda guardado y marcado como anulado.\nEscribí el motivo (obligatorio):`);
+  if (motivo === null) return;
+  if (!motivo.trim()) { toast('Para anular hay que escribir el motivo.', true); return; }
   const b = writeBatch(db);
-  b.delete(doc(db, 'servicios', s.id));
-  D.unidades.filter(u => u.servicioId === s.id).forEach(u => b.update(doc(db, 'unidades', u.id), { estado: 'Disponible', servicioId: '' }));
-  b.commit().catch(errEsc); selServ.delete(s.id);
+  b.update(doc(db, 'servicios', s.id), { anulado: true, anuladoMotivo: motivo.trim(), anuladoPor: perfil.nombre || '', anuladoFecha: `${fmtF(hoy())} ${ahora()}` });
+  liberarUnidades(b, s);
+  b.commit().catch(errEsc); selServ.delete(s.id); toast('Servicio anulado (se puede ver en Mostrar › Anulados)');
+}
+function restaurarServ(s) {
+  if (!confirm('¿Restaurar este servicio anulado?')) return;
+  updateDoc(doc(db, 'servicios', s.id), { anulado: false }).catch(errEsc); toast('Servicio restaurado');
 }
 function editarServ(s) {
-  const eU = new Set(s.unidades || []), eP = new Set(s.personal || []);
+  const st = dotDesdeServicio(s);
   const html = `<div class="grid">
     <label>Fecha<input type="date" name="fecha" value="${esc(s.fecha)}" required></label>
     <label>Hora de llamado<input type="time" name="horaLlamado" value="${esc(s.horaLlamado)}" required></label>
@@ -1062,8 +1263,8 @@ function editarServ(s) {
     <label class="ancho">Descripción<textarea name="descripcion" rows="2">${esc(s.descripcion)}</textarea></label>
     <label class="ancho">Observaciones / novedades<textarea name="observaciones" rows="2">${esc(s.observaciones)}</textarea></label>
   </div>
-  <div class="sub">Unidades</div><div class="chips" id="edU">${chipsUnidades(eU)}</div>
-  <div class="sub">Dotación</div><input type="search" id="edBus" placeholder="Buscar persona…" style="width:100%;margin-bottom:6px"><div class="chips" id="edP">${chipsPersonal(eP, true)}</div>`;
+  <div id="edDot"></div>
+  <details style="margin-top:10px" ${s.resultado || s.estado === 'Cerrado' ? 'open' : ''}><summary style="cursor:pointer;font-weight:600">Resultado del servicio</summary>${resultadoHTML(s)}</details>`;
   abrirDialogo('Editar servicio', html, form => {
     const g = k => form.elements[k].value.trim();
     const cambios = {};
@@ -1076,20 +1277,30 @@ function editarServ(s) {
     if (!tieneCoords(co) && cambios.direccion) reubicar = true;                                   // quedó sin ubicación
     if (dirCambio && coordsIgual && s.geoAprox) { cambios.lat = ''; cambios.lng = ''; reubicar = true; }   // cambió la dirección
     if (reubicar) setTimeout(() => ubicarServicio(s.id, cambios.direccion, cambios.localidad), 300);
-    cambios.unidades = [...eU]; cambios.personal = [...eP];
-    updateDoc(doc(db, 'servicios', s.id), cambios).catch(errEsc);
-  }, cuerpo => {
-    const tog = set => e => { const c = e.target.closest('.chip'); if (!c) return; set.has(c.dataset.id) ? set.delete(c.dataset.id) : set.add(c.dataset.id); c.classList.toggle('on'); };
-    $('#edU', cuerpo).addEventListener('click', tog(eU));
-    $('#edP', cuerpo).addEventListener('click', tog(eP));
-    $('#edBus', cuerpo).addEventListener('input', e => { const q = norm(e.target.value); $$('#edP .chip', cuerpo).forEach(c => c.hidden = q && !norm(c.textContent).includes(q)); });
-  });
+    Object.assign(cambios, dotParaGuardar(st));
+    cambios.resultado = leerResultado(form);
+    const b = writeBatch(db);
+    b.update(doc(db, 'servicios', s.id), cambios);
+    // mantener el estado de las unidades coherente con el servicio
+    const antes = s.unidades || [], ahoraU = cambios.unidades;
+    if (cambios.estado === 'En curso') {
+      ahoraU.filter(u => byId('unidades', u)?.servicioId !== s.id).forEach(u => byId('unidades', u) && b.update(doc(db, 'unidades', u), { estado: 'En servicio', servicioId: s.id }));
+      liberarUnidades(b, s, antes.filter(u => !ahoraU.includes(u)));
+    } else if (s.estado === 'En curso') liberarUnidades(b, s);
+    b.commit().catch(errEsc);
+  }, cuerpo => montarDot($('#edDot', cuerpo), st, { todos: true, excepto: s.id }));
 }
 
 /* =====================================================================
    CENTROS Y EVACUADOS
    ===================================================================== */
 let centroSel = null, verHistorico = false, centroMontado = null;
+const VULN = ['Discapacidad', 'Necesita medicación', 'Embarazada', 'Adulto mayor solo/a', 'Bebé (menor de 2 años)', 'Requiere atención médica'];
+const NECESIDADES = ['Colchones', 'Frazadas / abrigo', 'Alimentos', 'Agua potable', 'Ropa', 'Pañales', 'Leche / alimentos para bebés', 'Medicamentos', 'Artículos de higiene', 'Calefacción', 'Generador / electricidad', 'Atención médica'];
+const evVigentes = () => D.evacuados.filter(e => !e.anulado);
+const checksHTML = (nombre, lista, marcados = []) => `<div class="chips">${lista.map(v => `<label class="chk" style="margin-right:12px"><input type="checkbox" name="${nombre}" value="${esc(v)}" ${marcados.includes(v) ? 'checked' : ''}> ${esc(v)}</label>`).join('')}</div>`;
+const leerChecks = (form, nombre) => [...form.querySelectorAll(`[name="${nombre}"]:checked`)].map(x => x.value);
+const faltantesCentro = c => [...(c.necesidades || []), c.necesidadesNota].filter(Boolean);
 
 function renderCentroDetalle(forzar = false) {
   const cont = perfil.rol === 'admin' ? $('#centroDetalle') : $('#miCentro');
@@ -1099,6 +1310,12 @@ function renderCentroDetalle(forzar = false) {
   if (centroMontado !== cid || forzar) {
     centroMontado = cid;
     cont.innerHTML = `<div class="card"><h3 id="cdTit"></h3><div id="cdRes" class="muted"></div></div>
+    <div class="card"><h3>Necesidades del centro</h3>
+      <div class="muted">Marcá lo que falta. El COE lo ve al instante.</div>
+      <form id="fNec">${checksHTML('nec', NECESIDADES)}
+        <label class="ancho" style="margin-top:6px">Otras necesidades / cantidades<textarea name="nota" rows="2" placeholder="Ej.: faltan 15 colchones y leche para 4 bebés"></textarea></label>
+        <div class="botones"><button class="btn azul">Guardar necesidades</button><span class="muted" id="necAct"></span></div>
+      </form></div>
     <div class="card"><h3>Ingresar evacuado</h3>
       <form id="fEvac" autocomplete="off">
         <div class="grid">
@@ -1110,7 +1327,9 @@ function renderCentroDetalle(forzar = false) {
           <label>Mayor / menor<select name="mayor"><option value="1">Mayor</option><option value="0">Menor</option></select></label>
           <label class="ancho" data-solo-mayor>Dirección (de donde viene)<input name="direccion"></label>
           <label>Teléfono<input name="telefono" type="tel"></label>
-          <label class="ancho">Observaciones (salud, mascotas, necesidades)<input name="observaciones"></label>
+          <label>Mascotas<input name="mascotas" placeholder="Ej.: 2 perros"></label>
+          <div class="ancho"><div class="sub" style="margin-top:2px">Atención especial</div>${checksHTML('vuln', VULN)}</div>
+          <label class="ancho">Observaciones<input name="observaciones"></label>
         </div>
         <div class="botones"><button class="btn prim" value="otro">Ingresar y cargar otro del mismo grupo</button><button class="btn" value="fin">Ingresar y terminar grupo</button></div>
       </form></div>
@@ -1131,15 +1350,25 @@ function renderCentroDetalle(forzar = false) {
         centro: cid, grupo: g('grupo'), apellido: g('apellido'), nombre: g('nombre'), dni: g('dni'),
         edad: g('edad') === '' ? '' : Number(g('edad')), mayor, direccion: mayor ? g('direccion') : '',
         telefono: g('telefono'), observaciones: g('observaciones'), eventoId: ev?.id || '',
+        vulnerable: leerChecks(f, 'vuln'), mascotas: g('mascotas'), anulado: false,
         fechaIngreso: hoy(), horaIngreso: ahora(), fechaEgreso: '', horaEgreso: '', activo: true, cargadoPor: perfil.nombre || '', creado: serverTimestamp()
       };
       setDoc(doc(collection(db, 'evacuados')), d).catch(errEsc);
       const seguir = e.submitter?.value === 'otro';
       ['nombre', 'dni', 'edad', 'observaciones', 'telefono'].forEach(k => f.elements[k].value = '');
+      f.querySelectorAll('[name=vuln]').forEach(x => x.checked = false);
+      if (!seguir) f.elements.mascotas.value = '';
       f.elements.mayor.value = '1'; sincMayor();
       if (!seguir) { ['grupo', 'apellido', 'direccion'].forEach(k => f.elements[k].value = ''); f.elements.grupo.focus(); }
       else f.elements.nombre.focus();
       toast(`Ingresado: ${d.apellido} ${d.nombre}`);
+    });
+    const fn = $('#fNec', cont);
+    fn.addEventListener('input', () => fn.dataset.sucio = '1');
+    fn.addEventListener('submit', e => {
+      e.preventDefault();
+      updateDoc(doc(db, 'centros', cid), { necesidades: leerChecks(fn, 'nec'), necesidadesNota: fn.elements.nota.value.trim(), necesidadesAct: `${fmtF(hoy())} ${ahora()}${perfil.nombre ? ' — ' + perfil.nombre : ''}` }).catch(errEsc);
+      fn.dataset.sucio = ''; toast('Necesidades guardadas');
     });
     $('#cdHist', cont).addEventListener('change', e => { verHistorico = e.target.checked; renderListaEvac(); });
     $('#cdBus', cont).addEventListener('input', renderListaEvac);
@@ -1154,14 +1383,23 @@ function renderCentroDetalle(forzar = false) {
       } else if (b.dataset.eacc === 'reingreso') {
         enLotes(lista.map(p => bt => bt.update(doc(db, 'evacuados', p.id), { activo: true, fechaEgreso: '', horaEgreso: '' })));
       } else if (b.dataset.eacc === 'editar') editarEvac(lista[0]);
-      else if (b.dataset.eacc === 'borrar' && confirm('¿Borrar este registro? (Para alguien que se fue, usá "Egreso".)')) deleteDoc(doc(db, 'evacuados', lista[0].id)).catch(errEsc);
+      else if (b.dataset.eacc === 'anular') anularEvac(lista[0]);
     });
   }
-  const act = D.evacuados.filter(e => e.centro === cid && e.activo);
+  const act = evVigentes().filter(e => e.centro === cid && e.activo);
+  const vul = act.filter(e => (e.vulnerable || []).length), masc = act.filter(e => e.mascotas);
   $('#cdTit', cont).textContent = c.nombre;
   $('#cdRes', cont).innerHTML = `${esc([c.direccion, c.localidad].filter(Boolean).join(', '))}<br>
     <b style="font-size:18px;color:var(--txt)">${act.length}</b> evacuados ahora${c.capacidad ? ` de ${c.capacidad} lugares` : ''} · ${act.filter(e => e.mayor).length} mayores · ${act.filter(e => !e.mayor).length} menores · ${new Set(act.map(e => norm(e.grupo))).size} grupos familiares
+    ${vul.length ? `<br><span class="vul">⚠ ${vul.length} con atención especial</span>` : ''}${masc.length ? ` · 🐾 ${masc.length} con mascotas` : ''}
+    ${c.capacidad && act.length >= c.capacidad ? '<br><span class="vul">⚠ Centro completo</span>' : ''}
     ${eventosActivos()[0] ? `<br>Evento: ${esc(eventosActivos()[0].nombre)}` : ''}`;
+  const fn = $('#fNec', cont);
+  if (fn && !fn.dataset.sucio && !fn.contains(document.activeElement)) {
+    fn.querySelectorAll('[name=nec]').forEach(x => x.checked = (c.necesidades || []).includes(x.value));
+    fn.elements.nota.value = c.necesidadesNota || '';
+  }
+  if (fn) $('#necAct', cont).textContent = c.necesidadesAct ? 'Actualizado ' + c.necesidadesAct : '';
   renderListaEvac();
 }
 
@@ -1170,7 +1408,7 @@ function renderListaEvac() {
   const cid = perfil.rol === 'admin' ? centroSel : perfil.centro;
   const lista = $('#cdLista', cont); if (!lista) return;
   const q = norm($('#cdBus', cont).value);
-  let ev = D.evacuados.filter(e => e.centro === cid && (verHistorico || e.activo));
+  let ev = evVigentes().filter(e => e.centro === cid && (verHistorico || e.activo));
   if (q) ev = ev.filter(e => norm([e.apellido, e.nombre, e.dni, e.grupo].join(' ')).includes(q));
   const grupos = {};
   ev.forEach(e => (grupos[e.grupo || '(sin grupo)'] ??= []).push(e));
@@ -1182,9 +1420,10 @@ function renderListaEvac() {
       ${activos.length > 1 ? `<button class="btn chico" data-eacc="egreso" data-ids="${activos.map(p => p.id).join(',')}">Egreso de todo el grupo</button>` : ''}</div>
       ${ps.map(p => `<div class="fila ${p._pend ? 'pend' : ''}" data-id="${p.id}" style="${p.activo ? '' : 'opacity:.55'}">
         <div class="txt"><b>${esc(p.apellido)}</b> ${esc(p.nombre)} <span class="muted">${p.dni ? 'DNI ' + esc(p.dni) : ''} ${p.edad !== '' && p.edad != null ? '· ' + p.edad + ' años' : ''} · ${p.mayor ? 'Mayor' : 'Menor'}</span> ${sinEnviar(p)}
+          ${(p.vulnerable || []).length ? `<div class="vul">⚠ ${esc(p.vulnerable.join(', '))}</div>` : ''}${p.mascotas ? `<div class="muted">🐾 ${esc(p.mascotas)}</div>` : ''}
           <div class="muted">Ingreso ${fmtF(p.fechaIngreso)} ${esc(p.horaIngreso)}${p.activo ? '' : ` · Egreso ${fmtF(p.fechaEgreso)} ${esc(p.horaEgreso)}`}${p.direccion ? ' · ' + esc(p.direccion) : ''}${p.observaciones ? ' · ⚠ ' + esc(p.observaciones) : ''}</div></div>
         <div class="btns">${p.activo ? '<button class="btn chico" data-eacc="egreso">Egreso</button>' : '<button class="btn chico" data-eacc="reingreso">Reingreso</button>'}
-          <button class="btn chico" data-eacc="editar">✎</button>${perfil.rol === 'admin' ? '<button class="btn chico" data-eacc="borrar">🗑</button>' : ''}</div></div>`).join('')}</div>`;
+          <button class="btn chico" data-eacc="editar">✎</button>${perfil.rol === 'admin' ? '<button class="btn chico" data-eacc="anular" title="Anular (cargado por error)">Anular</button>' : ''}</div></div>`).join('')}</div>`;
   }).join('') : '<div class="vacio">No hay evacuados para mostrar.</div>';
 }
 
@@ -1200,6 +1439,8 @@ function editarEvac(p) {
     <label>Teléfono<input name="telefono" value="${esc(p.telefono)}"></label>
     <label>Fecha ingreso<input type="date" name="fechaIngreso" value="${esc(p.fechaIngreso)}"></label>
     <label>Hora ingreso<input type="time" name="horaIngreso" value="${esc(p.horaIngreso)}"></label>
+    <label>Mascotas<input name="mascotas" value="${esc(p.mascotas || '')}"></label>
+    <div class="ancho"><div class="sub">Atención especial</div>${checksHTML('vuln', VULN, p.vulnerable || [])}</div>
     <label class="ancho">Observaciones<input name="observaciones" value="${esc(p.observaciones)}"></label>
   </div>`;
   abrirDialogo('Editar evacuado', html, form => {
@@ -1207,9 +1448,32 @@ function editarEvac(p) {
     const mayor = g('mayor') === '1';
     updateDoc(doc(db, 'evacuados', p.id), {
       grupo: g('grupo'), apellido: g('apellido'), nombre: g('nombre'), dni: g('dni'), edad: g('edad') === '' ? '' : Number(g('edad')),
-      mayor, direccion: mayor ? g('direccion') : '', telefono: g('telefono'), fechaIngreso: g('fechaIngreso'), horaIngreso: g('horaIngreso'), observaciones: g('observaciones')
+      mayor, direccion: mayor ? g('direccion') : '', telefono: g('telefono'), fechaIngreso: g('fechaIngreso'), horaIngreso: g('horaIngreso'), observaciones: g('observaciones'),
+      mascotas: g('mascotas'), vulnerable: leerChecks(form, 'vuln')
     }).catch(errEsc);
   });
+}
+function anularEvac(p) {
+  const motivo = prompt(`Anular el registro de ${p.apellido} ${p.nombre}.\n\nNo se borra: queda guardado y marcado como anulado (para alguien que se fue, usá "Egreso").\nEscribí el motivo (obligatorio):`);
+  if (motivo === null) return;
+  if (!motivo.trim()) { toast('Para anular hay que escribir el motivo.', true); return; }
+  updateDoc(doc(db, 'evacuados', p.id), { anulado: true, anuladoMotivo: motivo.trim(), anuladoPor: perfil.nombre || '', anuladoFecha: `${fmtF(hoy())} ${ahora()}` }).catch(errEsc);
+  toast('Registro anulado (se puede restaurar desde el buscador de Centros)');
+}
+
+/* ---------- buscador de personas en todos los centros (admin) ---------- */
+function renderBuscadorEvac() {
+  const inp = $('#busGlobal'); if (!inp) return;
+  const q = norm(inp.value), out = $('#busRes');
+  if (q.length < 2) { out.innerHTML = '<div class="muted">Escribí al menos 2 letras del nombre, apellido o DNI. Busca en todos los centros, incluidos los que ya se fueron.</div>'; return; }
+  const r = D.evacuados.filter(e => norm([e.apellido, e.nombre, e.dni, e.grupo].join(' ')).includes(q))
+    .sort((a, b) => (a.anulado - b.anulado) || (b.activo - a.activo) || cmpNat(a.apellido, b.apellido)).slice(0, 50);
+  out.innerHTML = r.length ? r.map(e => `<div class="fila" data-id="${esc(e.id)}" style="${e.anulado ? 'opacity:.55' : ''}">
+      <div class="txt"><b>${esc(e.apellido)}</b> ${esc(e.nombre)} <span class="muted">${e.dni ? 'DNI ' + esc(e.dni) : ''}${e.edad !== '' && e.edad != null ? ' · ' + e.edad + ' años' : ''} · Grupo: ${esc(e.grupo || '—')}</span>
+        <div>${e.anulado ? '<span class="badge b-anul">ANULADO</span> ' + esc(e.anuladoMotivo || '') : e.activo ? `<span class="badge b-Disponible">Alojado</span> en <b>${esc(nomCentro(e.centro))}</b> desde ${fmtF(e.fechaIngreso)} ${esc(e.horaIngreso)}` : `<span class="badge">Egresó</span> de ${esc(nomCentro(e.centro))} el ${fmtF(e.fechaEgreso)} ${esc(e.horaEgreso)}`}
+        ${e.telefono ? ` · <a href="tel:${esc(e.telefono)}">${esc(e.telefono)}</a>` : ''}${(e.vulnerable || []).length ? ` · <span class="vul">⚠ ${esc(e.vulnerable.join(', '))}</span>` : ''}</div></div>
+      <div class="btns">${e.anulado ? '<button class="btn chico" data-bus="restaurar">Restaurar</button>' : `<button class="btn chico" data-bus="ver" data-centro="${esc(e.centro)}">Ver centro</button>`}</div></div>`).join('')
+    : '<div class="vacio">No se encontró a nadie con ese dato.</div>';
 }
 
 /* =====================================================================
@@ -1234,18 +1498,20 @@ function renderSituacion() {
    TABLERO
    ===================================================================== */
 function renderTablero() {
-  const abiertos = D.servicios.filter(s => s.estado !== 'Cerrado').sort(ordenServ);
+  const dCopia = diasDesde(situacion.ultimaCopia);
+  $('#avisoBk').innerHTML = dCopia > 7 ? `<div class="aviso">⚠ ${situacion.ultimaCopia ? 'La última copia de seguridad tiene ' + dCopia + ' días.' : 'Todavía no se hizo ninguna copia de seguridad.'} Descargala desde <b>Accesos y datos › Copia de seguridad</b>.</div>` : '';
+  const abiertos = vigentes().filter(s => s.estado !== 'Cerrado').sort(ordenServ);
   const u = e => D.unidades.filter(x => x.estado === e).length;
   const pr = D.personal.filter(p => p.presente);
-  const evAct = D.evacuados.filter(e => e.activo);
+  const evAct = evVigentes().filter(e => e.activo);
   const kpi = (n, l, color = '') => `<div class="kpi"><div class="n" style="color:${color}">${n}</div><div class="l">${l}</div></div>`;
   $('#kpis').innerHTML =
     kpi(abiertos.filter(s => s.estado === 'En curso').length, 'servicios en curso', '#dc2626') +
     kpi(abiertos.filter(s => s.estado === 'Pendiente').length, 'avisos pendientes', '#d97706') +
-    kpi(D.servicios.filter(s => s.fecha === hoy()).length, 'servicios hoy') +
+    kpi(vigentes().filter(s => s.fecha === hoy()).length, 'servicios hoy') +
     kpi(`${u('Disponible')}<span style="font-size:15px;color:var(--gris)"> / ${D.unidades.length}</span>`, `unidades disponibles · ${u('En servicio')} en servicio`, '#15803d') +
-    kpi(pr.length, `presentes · ${pr.filter(p => p.jerarquico).length} jerárq. · ${pr.filter(p => p.chofer).length} choferes`) +
-    kpi(evAct.length, `evacuados en ${new Set(evAct.map(e => e.centro)).size} centro(s) · ${evAct.filter(e => !e.mayor).length} menores`, '#1d4ed8');
+    kpi(`${pr.filter(p => !OCU.has(p.id)).length}<span style="font-size:15px;color:var(--gris)"> / ${pr.length}</span>`, `bomberos disponibles / presentes · ${pr.filter(p => !OCU.has(p.id) && p.chofer).length} choferes y ${pr.filter(p => !OCU.has(p.id) && p.jerarquico).length} jerárq. libres`, '#15803d') +
+    kpi(evAct.length, `evacuados en ${new Set(evAct.map(e => e.centro)).size} centro(s) · ${evAct.filter(e => !e.mayor).length} menores · ${evAct.filter(e => (e.vulnerable || []).length).length} con atención especial`, '#1d4ed8');
   $('#tabServ').innerHTML = abiertos.length ? abiertos.slice(0, 30).map(s => servHTML(s, false)).join('') : '<div class="vacio">No hay servicios abiertos.</div>';
   const rio = [...D.rio].sort(TABLAS.rio.orden)[0];
   const riesgos = D.riesgo.filter(r => r.nivel === 'Alto' || r.nivel === 'Crítico').sort(TABLAS.riesgo.orden);
@@ -1254,14 +1520,11 @@ function renderTablero() {
     <div><b>Eventos activos:</b> ${eventosActivos().map(e => esc(e.nombre)).join(', ') || '<span class="muted">ninguno</span>'}</div>
     <div style="margin-top:6px"><b>Río:</b> ${rio ? `${esc(rio.altura)} m ${esc(rio.tendencia || '')} <span class="muted">(${fmtF(rio.fecha)} ${esc(rio.hora)})</span>` : '<span class="muted">sin lecturas</span>'}</div>
     <div style="margin-top:6px"><b>Riesgo alto/crítico:</b> ${riesgos.map(r => `<span class="badge b-${clase(r.nivel)}">${esc(r.localidad)}</span>`).join(' ') || '<span class="muted">ninguno</span>'}</div>
-    <div style="margin-top:6px"><b>Centros abiertos:</b> ${centros.map(c => `${esc(c.nombre)} (${D.evacuados.filter(e => e.centro === c.id && e.activo).length}${c.capacidad ? '/' + c.capacidad : ''})`).join(' · ') || '<span class="muted">ninguno</span>'}</div>
+    <div style="margin-top:6px"><b>Centros abiertos:</b> ${centros.map(c => `${esc(c.nombre)} (${evAct.filter(e => e.centro === c.id).length}${c.capacidad ? '/' + c.capacidad : ''})`).join(' · ') || '<span class="muted">ninguno</span>'}</div>
+    ${D.centros.filter(c => faltantesCentro(c).length).map(c => `<div style="margin-top:4px" class="vul">${esc(c.nombre)} necesita: ${esc(faltantesCentro(c).join(', '))}</div>`).join('')}
     ${situacion.pronostico ? `<div style="margin-top:6px;white-space:pre-wrap"><b>Pronóstico:</b> ${esc(situacion.pronostico)}</div>` : ''}`;
 }
-$('#tabServ').addEventListener('click', e => {
-  const b = e.target.closest('button[data-sacc]'); if (!b) return;
-  const s = byId('servicios', b.closest('[data-id]').dataset.id); if (!s) return;
-  ({ despachar: despacharServ, cerrar: cerrarServ, editar: editarServ, borrar: borrarServ })[b.dataset.sacc](s);
-});
+$('#tabServ').addEventListener('click', e => accionServ(e));
 
 /* =====================================================================
    REPORTES Y EXPORTACIÓN
@@ -1303,8 +1566,10 @@ async function generarInforme() {
   $('#informe').innerHTML = '<div class="muted">Generando…</div>';
   const q = evId ? query(collection(db, 'servicios'), where('eventoId', '==', evId))
     : query(collection(db, 'servicios'), where('fecha', '>=', desde), where('fecha', '<=', hasta));
-  const servs = (await traer(q)).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => -ordenServ(a, b));
-  const evs = D.evacuados.filter(e => evId ? e.eventoId === evId : (e.fechaIngreso >= desde && e.fechaIngreso <= hasta));
+  const todosServs = (await traer(q)).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => -ordenServ(a, b));
+  const servs = todosServs.filter(s => !s.anulado), nAnulados = todosServs.length - servs.length;
+  const evs = D.evacuados.filter(e => !e.anulado && (evId ? e.eventoId === evId : (e.fechaIngreso >= desde && e.fechaIngreso <= hasta)));
+  const sumaRes = k => servs.reduce((n, s) => n + (Number(s.resultado?.[k]) || 0), 0);
   const ev = byId('eventos', evId);
   const totMin = servs.reduce((n, s) => n + minutos(s.horaSalida, s.horaRetorno), 0);
   const unis = new Set(servs.flatMap(s => s.unidades || []));
@@ -1317,20 +1582,25 @@ async function generarInforme() {
     <h4>Resumen</h4>
     ${tabla(['Servicios', 'Abiertos', 'Unidades intervinientes', 'Bomberos intervinientes', 'Tiempo total en servicio', 'Evacuados (ingresos)', 'Evacuados aún alojados'],
       [[servs.length, servs.filter(s => s.estado !== 'Cerrado').length, unis.size, pers.size, hhmm(totMin), evs.length, evs.filter(e => e.activo).length]])}
+    ${tabla(RES_CAMPOS.map(([, l]) => l), [RES_CAMPOS.map(([k]) => sumaRes(k))])}
     <div class="dos"><div>${tabla(['Tipo de servicio', 'Cant.'], contar(servs, s => s.tipo))}</div><div>${tabla(['Localidad', 'Cant.'], contar(servs, s => s.localidad))}</div></div>
+    ${servs.some(s => (s.resultado?.apoyo || []).length) ? tabla(['Apoyo de otras instituciones', 'Servicios'], contar(servs.flatMap(s => s.resultado?.apoyo || []).map(a => ({ a })), x => x.a)) : ''}
+    ${nAnulados ? `<div class="muted">No se incluyen ${nAnulados} servicio(s) anulado(s).</div>` : ''}
     <h4>Servicios</h4>
-    ${servs.length ? tabla(['Fecha', 'Llamado', 'Salida', 'Retorno', 'Tipo', 'Lugar', 'Ubicación', 'Unidades', 'Dotación', 'Estado'],
+    ${servs.length ? tabla(['Fecha', 'Llamado', 'Salida', 'Retorno', 'Tipo', 'Lugar', 'Ubicación', ext ? 'Dotación por unidad' : 'Unidades (personal)', 'A cargo', 'Resultado', 'Estado'],
       servs.map(s => [fmtF(s.fecha), esc(s.horaLlamado), esc(s.horaSalida), esc(s.horaRetorno), esc(s.tipo), esc([s.direccion, s.localidad].filter(Boolean).join(', ')),
         tieneCoords(s) ? `<a href="${linkMapa(s)}" target="_blank" rel="noopener">${Number(s.lat).toFixed(5)}, ${Number(s.lng).toFixed(5)}</a>${s.geoAprox && s.geoPrecision !== 'exacta' ? (s.geoPrecision === 'localidad' ? ' (solo localidad)' : ' (aprox.)') : ''}` : 'sin ubicar',
-        esc((s.unidades || []).map(nomUnidad).join(', ')), ext ? esc((s.personal || []).map(nomPersona).join('; ')) : (s.personal || []).length, esc(s.estado)])) : '<div class="muted">Sin servicios.</div>'}
+        esc(textoDotacion(s, ext)), esc(s.aCargo ? nomPersona(s.aCargo) : ''), esc(resumenResultado(s.resultado)), esc(s.estado)])) : '<div class="muted">Sin servicios.</div>'}
     <h4>Evacuación</h4>
-    ${porCentro.length ? tabla(['Centro', 'Ingresos', 'Alojados ahora', 'Mayores', 'Menores'], porCentro.map(([n]) => {
+    ${porCentro.length ? tabla(['Centro', 'Ingresos', 'Alojados ahora', 'Mayores', 'Menores', 'Atención especial', 'Con mascotas', 'Necesidades actuales'], porCentro.map(([n]) => {
       const l = evs.filter(e => nomCentro(e.centro) === n || (n === '(sin dato)' && !nomCentro(e.centro)));
-      return [esc(n), l.length, l.filter(e => e.activo).length, l.filter(e => e.mayor).length, l.filter(e => !e.mayor).length];
+      const c = D.centros.find(x => x.nombre === n);
+      return [esc(n), l.length, l.filter(e => e.activo).length, l.filter(e => e.mayor).length, l.filter(e => !e.mayor).length,
+        l.filter(e => (e.vulnerable || []).length).length, l.filter(e => e.mascotas).length, esc(c ? faltantesCentro(c).join(', ') : '')];
     })) : '<div class="muted">Sin evacuados registrados.</div>'}`;
-  if (ext && evs.length) html += `<h4>Listado de evacuados</h4>` + tabla(['Centro', 'Grupo', 'Apellido y nombre', 'DNI', 'Edad', 'Dirección', 'Ingreso', 'Egreso', 'Obs.'],
+  if (ext && evs.length) html += `<h4>Listado de evacuados</h4>` + tabla(['Centro', 'Grupo', 'Apellido y nombre', 'DNI', 'Edad', 'Dirección', 'Ingreso', 'Egreso', 'Atención especial', 'Mascotas', 'Obs.'],
     [...evs].sort((a, b) => cmpNat(nomCentro(a.centro) + a.grupo, nomCentro(b.centro) + b.grupo)).map(e => [esc(nomCentro(e.centro)), esc(e.grupo), esc(`${e.apellido} ${e.nombre}`), esc(e.dni), esc(e.edad), esc(e.direccion),
-      `${fmtF(e.fechaIngreso)} ${esc(e.horaIngreso)}`, e.activo ? '—' : `${fmtF(e.fechaEgreso)} ${esc(e.horaEgreso)}`, esc(e.observaciones)]));
+      `${fmtF(e.fechaIngreso)} ${esc(e.horaIngreso)}`, e.activo ? '—' : `${fmtF(e.fechaEgreso)} ${esc(e.horaEgreso)}`, esc((e.vulnerable || []).join(', ')), esc(e.mascotas || ''), esc(e.observaciones)]));
   $('#informe').innerHTML = html;
   $('#btnImprimir').disabled = false;
   ultimoInforme = { servs, titulo: ev ? ev.nombre : `${fmtF(desde)} al ${fmtF(hasta)}` };
@@ -1349,12 +1619,16 @@ async function exportarCSV(col) {
   let filas, cab;
   if (col === 'servicios') {
     const todos = (await traer(collection(db, 'servicios'))).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => -ordenServ(a, b));
-    cab = ['Fecha', 'Hora llamado', 'Hora salida', 'Hora retorno', 'Tipo', 'Dirección', 'Localidad', 'Solicitante', 'Teléfono', 'Descripción', 'Latitud', 'Longitud', 'Unidades', 'Dotación', 'Cant. dotación', 'Estado', 'Evento', 'Observaciones'];
+    cab = ['Fecha', 'Hora llamado', 'Hora salida', 'Hora retorno', 'Tipo', 'Dirección', 'Localidad', 'Solicitante', 'Teléfono', 'Descripción', 'Latitud', 'Longitud', 'Unidades', 'Dotación por unidad (jefe / chofer)', 'Cant. dotación', 'A cargo',
+      ...RES_CAMPOS.map(([, l]) => l), 'Trasladados a', 'Apoyo de otras instituciones', 'Estado', 'Evento', 'Observaciones', 'Anulado', 'Motivo anulación'];
     filas = todos.map(s => [s.fecha, s.horaLlamado, s.horaSalida, s.horaRetorno, s.tipo, s.direccion, s.localidad, s.solicitante, s.telefono, s.descripcion, s.lat ?? '', s.lng ?? '',
-      (s.unidades || []).map(nomUnidad).join(', '), (s.personal || []).map(nomPersona).join('; '), (s.personal || []).length, s.estado, nomEvento(s.eventoId), s.observaciones]);
+      (s.unidades || []).map(nomUnidad).join(', '), textoDotacion(s), (s.personal || []).length, s.aCargo ? nomPersona(s.aCargo) : '',
+      ...RES_CAMPOS.map(([k]) => s.resultado?.[k] ?? ''), s.resultado?.destino || '', [...(s.resultado?.apoyo || []), s.resultado?.apoyoOtro].filter(Boolean).join(', '),
+      s.estado, nomEvento(s.eventoId), s.observaciones, s.anulado ? 'Sí' : '', s.anuladoMotivo || '']);
   } else if (col === 'evacuados') {
-    cab = ['Centro', 'Grupo', 'Apellido', 'Nombre', 'DNI', 'Edad', 'Mayor', 'Dirección', 'Teléfono', 'Fecha ingreso', 'Hora ingreso', 'Fecha egreso', 'Hora egreso', 'Alojado', 'Evento', 'Observaciones'];
-    filas = D.evacuados.map(e => [nomCentro(e.centro), e.grupo, e.apellido, e.nombre, e.dni, e.edad, e.mayor ? 'Sí' : 'No', e.direccion, e.telefono, e.fechaIngreso, e.horaIngreso, e.fechaEgreso, e.horaEgreso, e.activo ? 'Sí' : 'No', nomEvento(e.eventoId), e.observaciones]);
+    cab = ['Centro', 'Grupo', 'Apellido', 'Nombre', 'DNI', 'Edad', 'Mayor', 'Dirección', 'Teléfono', 'Fecha ingreso', 'Hora ingreso', 'Fecha egreso', 'Hora egreso', 'Alojado', 'Atención especial', 'Mascotas', 'Evento', 'Observaciones', 'Anulado', 'Motivo anulación'];
+    filas = D.evacuados.map(e => [nomCentro(e.centro), e.grupo, e.apellido, e.nombre, e.dni, e.edad, e.mayor ? 'Sí' : 'No', e.direccion, e.telefono, e.fechaIngreso, e.horaIngreso, e.fechaEgreso, e.horaEgreso, e.activo && !e.anulado ? 'Sí' : 'No',
+      (e.vulnerable || []).join(', '), e.mascotas || '', nomEvento(e.eventoId), e.observaciones, e.anulado ? 'Sí' : '', e.anuladoMotivo || '']);
   } else {
     const T = TABLAS[col];
     cab = T.campos.map(c => c.l);
@@ -1367,13 +1641,68 @@ function exportarKML(inf = null) {
   const pm = (n, d, lat, lng, est) => `<Placemark><name>${esc(n)}</name><description>${esc(d)}</description><styleUrl>#${est}</styleUrl><Point><coordinates>${lng},${lat},0</coordinates></Point></Placemark>`;
   const ss = inf ? inf.servs.filter(tieneCoords).map(s => pm(`${s.horaLlamado} ${s.tipo}`, `${fmtF(s.fecha)} — ${s.direccion || ''} ${s.localidad || ''} — Unidades: ${(s.unidades || []).map(nomUnidad).join(', ')} — Dotación: ${(s.personal || []).length} — ${s.estado}${s.descripcion ? ' — ' + s.descripcion : ''}`, s.lat, s.lng, 'serv')) : [];
   if (inf && inf.servs.length && !ss.length) toast('Ningún servicio del informe tiene coordenadas cargadas; el mapa sale solo con centros y helipuertos.', true);
-  const cs = D.centros.filter(c => c.lat && c.lng).map(c => pm(c.nombre, `${c.direccion || ''} — Capacidad ${c.capacidad || '?'} — Evacuados: ${D.evacuados.filter(e => e.centro === c.id && e.activo).length}`, c.lat, c.lng, 'centro'));
+  const cs = D.centros.filter(c => c.lat && c.lng).map(c => pm(c.nombre, `${c.direccion || ''} — Capacidad ${c.capacidad || '?'} — Evacuados: ${evVigentes().filter(e => e.centro === c.id && e.activo).length}`, c.lat, c.lng, 'centro'));
   const hs = D.helipuertos.filter(h => h.lat && h.lng).map(h => pm(h.nombre, h.observaciones || '', h.lat, h.lng, 'heli'));
   if (!cs.length && !hs.length && !ss.length) { toast('No hay nada con latitud/longitud cargadas para el mapa.', true); return; }
   const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>COE Brandsen</name>
 <Style id="centro"><IconStyle><color>ff00aa00</color></IconStyle></Style><Style id="heli"><IconStyle><color>ffff0000</color></IconStyle></Style><Style id="serv"><IconStyle><color>ff0000ff</color></IconStyle></Style>
 ${inf ? `<Folder><name>Servicios — ${esc(inf.titulo)}</name>${ss.join('')}</Folder>` : ''}<Folder><name>Centros de evacuación</name>${cs.join('')}</Folder><Folder><name>Helipuertos</name>${hs.join('')}</Folder></Document></kml>`;
   descargar(`coe_brandsen_${inf ? 'informe_' : ''}${hoy()}.kml`, kml, 'application/vnd.google-earth.kml+xml');
+}
+
+/* =====================================================================
+   COPIA DE SEGURIDAD (todo el sistema en un archivo) Y RESTAURACIÓN
+   ===================================================================== */
+const COLS_BACKUP = ['servicios', 'unidades', 'personal', 'centros', 'evacuados', 'eventos', 'helipuertos', 'contactos', 'riesgo', 'rio', 'accesos', 'config'];
+const aJSON = v => v && typeof v.toDate === 'function' ? { __fecha: v.toDate().toISOString() }
+  : Array.isArray(v) ? v.map(aJSON) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, aJSON(x)])) : v;
+const deJSON = v => v && typeof v === 'object' && !Array.isArray(v) && v.__fecha ? new Date(v.__fecha)
+  : Array.isArray(v) ? v.map(deJSON) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deJSON(x)])) : v;
+function diasDesde(fechaTxt) {   // 'YYYY-MM-DD HH:MM'
+  if (!fechaTxt) return Infinity;
+  const [f] = String(fechaTxt).split(' '); const d = new Date(f + 'T00:00:00');
+  return isNaN(d) ? Infinity : Math.floor((new Date(hoy() + 'T00:00:00') - d) / 86400000);
+}
+function htmlEstadoCopia() {
+  const u = situacion.ultimaCopia, d = diasDesde(u);
+  if (!u) return '<div class="aviso">⚠ Todavía no se descargó ninguna copia de seguridad.</div>';
+  const txt = `Última copia: ${fmtF(u.split(' ')[0])} ${u.split(' ')[1] || ''}${situacion.ultimaCopiaPor ? ' — ' + esc(situacion.ultimaCopiaPor) : ''} (${d === 0 ? 'hoy' : d === 1 ? 'ayer' : 'hace ' + d + ' días'})`;
+  return d > 7 ? `<div class="aviso">⚠ ${txt}. Conviene descargar una nueva.</div>` : `<div class="muted">✔ ${txt}</div>`;
+}
+async function descargarCopia() {
+  if (!navigator.onLine && !confirm('Estás sin conexión: la copia va a tener solo lo que este equipo tiene guardado. ¿Continuar?')) return;
+  const b = $('#btnBackup'); b.disabled = true; b.textContent = 'Preparando copia…';
+  try {
+    const colecciones = {}; let total = 0;
+    for (const c of COLS_BACKUP) {
+      const snap = await traer(collection(db, c));
+      colecciones[c] = snap.docs.map(d => ({ id: d.id, ...aJSON(d.data()) })); total += snap.docs.length;
+    }
+    const copia = { sistema: 'COE Bomberos Voluntarios de Brandsen', version: 1, fecha: new Date().toISOString(), por: perfil.nombre || '', total, colecciones };
+    const f = new Date(), sello = `${fechaLocal(f)}_${pad(f.getHours())}${pad(f.getMinutes())}`;
+    descargar(`COE_Brandsen_copia_${sello}.json`, JSON.stringify(copia), 'application/json');
+    await setDoc(doc(db, 'config', 'situacion'), { ultimaCopia: `${hoy()} ${ahora()}`, ultimaCopiaPor: perfil.nombre || '' }, { merge: true });
+    toast(`Copia descargada: ${total} registros`);
+  } catch (e) { errEsc(e); }
+  finally { b.disabled = false; b.textContent = 'Descargar copia completa'; }
+}
+async function restaurarCopia(file) {
+  let copia;
+  try { copia = JSON.parse(await file.text()); } catch { toast('El archivo no es una copia válida.', true); return; }
+  if (!copia?.colecciones || copia.version !== 1) { toast('El archivo no es una copia de este sistema.', true); return; }
+  const cols = Object.keys(copia.colecciones).filter(c => COLS_BACKUP.includes(c));
+  const resumen = cols.map(c => `${c}: ${copia.colecciones[c].length}`).join('\n');
+  if (!confirm(`Copia del ${new Date(copia.fecha).toLocaleString('es-AR')}${copia.por ? ' (' + copia.por + ')' : ''}:\n\n${resumen}\n\nSe van a volver a escribir estos registros. Los que tengan el mismo identificador se reemplazan por la versión de la copia; lo cargado después de la copia que no esté en el archivo NO se borra.\n\n¿Restaurar?`)) return;
+  if (prompt('Para confirmar escribí RESTAURAR') !== 'RESTAURAR') { toast('Restauración cancelada.'); return; }
+  const ops = [];
+  cols.forEach(c => copia.colecciones[c].forEach(({ id, ...d }) => { if (id && !String(id).includes('/')) ops.push(b => b.set(doc(db, c, String(id)), deJSON(d))); }));
+  enLotes(ops);
+  toast(`Restaurando ${ops.length} registros…`);
+}
+function prepararCopia() {
+  $('#btnBackup').addEventListener('click', descargarCopia);
+  $('#btnRestaurar').addEventListener('click', () => $('#bkArchivo').click());
+  $('#bkArchivo').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) restaurarCopia(f); });
 }
 
 /* =====================================================================
@@ -1479,10 +1808,10 @@ const RENDER = {
   servicios: () => { renderChipsNuevo(); renderListaServ(); },
   unidades: () => renderTabla('unidades'),
   personal: () => renderTabla('personal'),
-  centros: () => { renderTabla('centros'); renderCentroDetalle(); },
+  centros: () => { renderBuscadorEvac(); renderTabla('centros'); renderCentroDetalle(); },
   situacion: renderSituacion,
   reportes: () => { },
-  admin: () => renderTabla('accesos'),
+  admin: () => { renderTabla('accesos'); $('#bkEstado').innerHTML = htmlEstadoCopia(); },
   micentro: () => renderCentroDetalle()
 };
 </script>
